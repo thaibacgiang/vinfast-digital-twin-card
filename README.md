@@ -45,10 +45,13 @@ Cuộn xuống dưới cùng và chọn thẻ Thủ công (Manual).
 Copy và dán đoạn mã YAML dưới đây vào:
 
 YAML
+``
 
 type: custom:vinfast-digital-twin
 
 entity_prefix: vf8_abcd12345678
+
+``
 
 Prefix theo quy ước: dongxe_sovin
 
