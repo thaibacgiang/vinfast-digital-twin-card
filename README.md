@@ -45,8 +45,13 @@ Cuộn xuống dưới cùng và chọn thẻ Thủ công (Manual).
 Copy và dán đoạn mã YAML dưới đây vào:
 
 YAML
+
 type: custom:vinfast-digital-twin
+
 entity_prefix: vf8_abcd12345678
+
+Prefix theo quy ước: dongxe_sovin
+
 🔍 Làm sao để tìm entity_prefix của bạn?
 entity_prefix là từ khóa đại diện cho xe của bạn (giúp Card biết cần lấy dữ liệu từ chiếc xe nào nếu nhà bạn có 2 xe trở lên).
 
