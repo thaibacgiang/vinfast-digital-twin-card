@@ -15,9 +15,8 @@ class VinFastDigitalTwin extends HTMLElement {
     this._tripHistory = []; 
     this._selectedRouteCoords = []; 
     
-    // Biến cho bộ lọc Trạm sạc (ALL, DC, AC)
     this._stationFilter = 'ALL'; 
-    this._currentStations = []; // Lưu đệm trạm sạc để lọc không cần gọi lại API
+    this._currentStations = []; 
   }
 
   loadLeaflet() {
@@ -29,7 +28,6 @@ class VinFastDigitalTwin extends HTMLElement {
     document.head.appendChild(script);
   }
 
-  // Lấy dữ liệu file JSON từ ổ cứng
   async fetchTripHistory(vin) {
     if (!vin) return;
     try {
@@ -68,7 +66,6 @@ class VinFastDigitalTwin extends HTMLElement {
       selectEl.innerHTML = options;
   }
 
-  // Hàm Toán học: Tính góc xoay (Bearing) của mũi tên giữa 2 tọa độ
   getBearing(startLat, startLng, destLat, destLng) {
       startLat = startLat * Math.PI / 180;
       startLng = startLng * Math.PI / 180;
@@ -82,25 +79,15 @@ class VinFastDigitalTwin extends HTMLElement {
       return (brng + 360) % 360;
   }
 
-  // Hàm tạo Icon xe với góc xoay và tốc độ tùy chỉnh
   getCarIcon(angle = 0, speed = null) {
-      // Dùng SVG vẽ mũi tên sắc nét thay vì dấu chấm tròn
       const arrowSvg = `<svg viewBox="0 0 24 24" fill="#2563eb" stroke="white" stroke-width="2" style="transform: rotate(${angle}deg); width: 28px; height: 28px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));"><path d="M12 2L22 20L12 17L2 20L12 2Z"/></svg>`;
-      
       let speedBadge = '';
       if (speed !== null) {
           speedBadge = `<div style="position:absolute; top:-25px; left:50%; transform:translateX(-50%); background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold; border:1px solid white; white-space:nowrap; box-shadow:0 2px 4px rgba(0,0,0,0.3); z-index:1001;">${speed} km/h</div>`;
       }
-
-      return L.divIcon({
-          className: 'custom-directional-car',
-          html: `<div style="position:relative; width:28px; height:28px;">${speedBadge}${arrowSvg}</div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14]
-      });
+      return L.divIcon({ className: 'custom-directional-car', html: `<div style="position:relative; width:28px; height:28px;">${speedBadge}${arrowSvg}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
   }
 
-  // Hàm vẽ Trạm sạc có đi qua Bộ lọc
   renderStations() {
       if (!this._stationLayer || !this._map) return;
       this._stationLayer.clearLayers();
@@ -109,42 +96,32 @@ class VinFastDigitalTwin extends HTMLElement {
       let countRendered = 0;
 
       stations.forEach(st => {
-          // Logic Phân loại Trạm: >= 20kW là DC (Sạc nhanh), < 30kW là AC (Sạc chậm)
-          const isDC = st.power >= 20;
-          
+          const isDC = st.power >= 30;
           if (this._stationFilter === 'DC' && !isDC) return;
           if (this._stationFilter === 'AC' && isDC) return;
 
           if (st.lat && st.lng) {
               countRendered++;
-              // Đổi màu icon: DC = Đỏ/Cam, AC = Xanh lá
-              const color = isDC ? '#16a34a' : '#dc2626'; 
+              const color = isDC ? '#dc2626' : '#16a34a'; 
               const iconName = isDC ? 'mdi:ev-plug-ccs2' : 'mdi:ev-plug-type2';
 
               const stationIcon = L.divIcon({ 
                   className: 'station-icon', 
                   html: `<ha-icon icon="${iconName}" style="--mdc-icon-size: 16px; color: white;"></ha-icon>`, 
-                  iconSize: [16, 16], iconAnchor: [8, 8] 
+                  iconSize: [28, 28], iconAnchor: [14, 14] 
               });
               
-              // Đè lại CSS inline của divIcon để đổi màu nền
               stationIcon.createIcon = function (oldIcon) {
                   const div = L.DivIcon.prototype.createIcon.call(this, oldIcon);
-                  div.style.backgroundColor = color;
-                  div.style.borderColor = 'white';
-                  div.style.borderWidth = '2px';
-                  div.style.borderStyle = 'solid';
-                  div.style.borderRadius = '50%';
-                  div.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
+                  div.style.backgroundColor = color; div.style.borderColor = 'white'; div.style.borderWidth = '2px'; div.style.borderStyle = 'solid'; div.style.borderRadius = '50%'; div.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
                   return div;
               };
 
-              const popupHtml = `<div class="station-popup"><h3 style="margin-bottom:8px;">${st.name}</h3><p>🚗 Cách xe: <b>${st.dist.toFixed(1)} km</b></p><p style="color:${color}">⚡ C.Suất: <b>${st.power} kW (${isDC?'Sạc Nhanh DC':'Sạc Thường AC'})</b></p><p style="color:#16a34a">🔌 Trụ trống: <b>${st.avail} / ${st.total}</b></p></div>`;
+              const popupHtml = `<div class="station-popup"><h3 style="margin-bottom:8px;">${st.name}</h3><p>🚗 Cách xe: <b>${st.dist.toFixed(1)} km</b></p><p style="color:${color}">⚡ C.Suất: <b>${st.power} kW (${isDC?'Nhanh DC':'Thường AC'})</b></p><p style="color:#16a34a">🔌 Trụ trống: <b>${st.avail} / ${st.total}</b></p></div>`;
               L.marker([st.lat, st.lng], {icon: stationIcon}).bindPopup(popupHtml).addTo(this._stationLayer);
           }
       });
 
-      // Chỉ zoom bao quát nếu đang chọn tìm trạm mới
       if (countRendered > 0 && this._stationLayer.getLayers().length > 0) {
           const group = new L.featureGroup([this._marker, ...this._stationLayer.getLayers()]);
           this._map.fitBounds(group.getBounds(), {padding: [30, 30], maxZoom: 16});
@@ -158,7 +135,6 @@ class VinFastDigitalTwin extends HTMLElement {
     this._map = L.map(mapEl, { zoomControl: false, dragging: true, scrollWheelZoom: true, attributionControl: false }).setView([21.0285, 105.8542], 15);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(this._map);
 
-    // Mặc định xe chỉ mũi tên hướng Bắc (0 độ)
     this._marker = L.marker([21.0285, 105.8542], {icon: this.getCarIcon(0, null)}).addTo(this._map);
     this._polyline = L.polyline([], {color: '#2563eb', weight: 4, opacity: 0.8}).addTo(this._map);
     this._stationLayer = L.layerGroup().addTo(this._map);
@@ -181,7 +157,6 @@ class VinFastDigitalTwin extends HTMLElement {
 
     if (!this.content) {
       this.loadLeaflet();
-      
       const vinStr = p.split('_')[1];
       this.fetchTripHistory(vinStr);
 
@@ -206,6 +181,29 @@ class VinFastDigitalTwin extends HTMLElement {
               <div class="vf-tire vf-tire-fr" id="tire-fr"><ha-icon icon="mdi:tire"></ha-icon><br><span></span> bar</div>
               <div class="vf-tire vf-tire-rl" id="tire-rl"><ha-icon icon="mdi:tire"></ha-icon><br><span></span> bar</div>
               <div class="vf-tire vf-tire-rr" id="tire-rr"><ha-icon icon="mdi:tire"></ha-icon><br><span></span> bar</div>
+            </div>
+
+            <div class="vf-stats-grid">
+              <div class="stat-box">
+                <ha-icon icon="mdi:battery-charging-60" style="color: #10b981;"></ha-icon>
+                <div class="stat-info"><span class="stat-label">Mức Pin</span><br><span class="stat-val" id="vf-stat-batt">--</span></div>
+              </div>
+              <div class="stat-box">
+                <ha-icon icon="mdi:map-marker-distance" style="color: #3b82f6;"></ha-icon>
+                <div class="stat-info"><span class="stat-label">Phạm vi</span><br><span class="stat-val" id="vf-stat-range">--</span></div>
+              </div>
+              <div class="stat-box">
+                <ha-icon icon="mdi:leaf" style="color: #10b981;"></ha-icon>
+                <div class="stat-info"><span class="stat-label">Hiệu suất TB</span><br><span class="stat-val" id="vf-stat-eff">--</span></div>
+              </div>
+              <div class="stat-box">
+                <ha-icon icon="mdi:chart-bell-curve" style="color: #f59e0b;"></ha-icon>
+                <div class="stat-info"><span class="stat-label">Tốc độ tối ưu</span><br><span class="stat-val" id="vf-stat-ideal" style="font-size:11px;">--</span></div>
+              </div>
+              <div class="stat-box">
+                <ha-icon icon="mdi:map-marker-path" style="color: #8b5cf6;"></ha-icon>
+                <div class="stat-info"><span class="stat-label">Trip hiện tại</span><br><span class="stat-val" id="vf-stat-trip">--</span></div>
+              </div>
             </div>
 
             <div class="vf-controls-area">
@@ -235,7 +233,9 @@ class VinFastDigitalTwin extends HTMLElement {
                 <button class="map-btn" id="btn-zoom-out" title="Thu nhỏ"><ha-icon icon="mdi:minus"></ha-icon></button>
                 <button class="map-btn" id="btn-locate" title="Vị trí xe"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button>
                 
-                <div style="height: 1px; background:#ccc; margin: 4px 0;"></div> <button class="map-btn" id="btn-stations" title="Tìm trạm sạc"><ha-icon icon="mdi:ev-station" style="color: #f59e0b;"></ha-icon></button>
+                <div style="height: 1px; background:#ccc; margin: 4px 0;"></div>
+                
+                <button class="map-btn" id="btn-stations" title="Tìm trạm sạc"><ha-icon icon="mdi:ev-station" style="color: #f59e0b;"></ha-icon></button>
                 <button class="map-btn" id="btn-filter-station" title="Lọc trạm sạc" style="font-weight:900; font-size:11px; color:#f59e0b; font-family:sans-serif;">ALL</button>
 
                 <div style="height: 1px; background:#ccc; margin: 4px 0;"></div>
@@ -268,6 +268,15 @@ class VinFastDigitalTwin extends HTMLElement {
         .vf-tire ha-icon { --mdc-icon-size: 14px; color: #6b7280; }
         .vf-tire-fl { bottom: 5%; left: 0; } .vf-tire-fr { top: 15%; left: 0; } .vf-tire-rl { bottom: 5%; right: 0; } .vf-tire-rr { top: 15%; right: 0; }
         
+        /* CSS MỚI CHO BẢNG ĐỒNG HỒ STATS */
+        .vf-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; }
+        .stat-box { display: flex; align-items: center; gap: 8px; background: rgba(243, 244, 246, 0.6); padding: 10px; border-radius: 12px; border: 1px solid rgba(229, 231, 235, 0.8); transition: transform 0.2s; }
+        .stat-box:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .stat-box ha-icon { --mdc-icon-size: 24px; }
+        .stat-info { line-height: 1.2; }
+        .stat-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; }
+        .stat-val { font-size: 13px; font-weight: 800; color: #1f2937; }
+
         .vf-controls-area { display: flex; justify-content: center; gap: 16px; align-items: center; margin-bottom: 16px; }
         .vf-gears { display: flex; background: rgba(243,244,246,0.8); padding: 10px 20px; border-radius: 30px; gap: 20px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
         .gear { font-size: 16px; font-weight: 800; color: #9ca3af; transition: all 0.3s; position: relative; }
@@ -296,7 +305,6 @@ class VinFastDigitalTwin extends HTMLElement {
       this.appendChild(style);
       this.content = true;
 
-      // SỰ KIỆN CƠ BẢN
       this.querySelector('#btn-zoom-in').addEventListener('click', () => { if(this._map) this._map.zoomIn(); });
       this.querySelector('#btn-zoom-out').addEventListener('click', () => { if(this._map) this._map.zoomOut(); });
       this.querySelector('#btn-locate').addEventListener('click', () => { 
@@ -305,7 +313,6 @@ class VinFastDigitalTwin extends HTMLElement {
         }
       });
       
-      // SỰ KIỆN TÌM TRẠM
       const btnStation = this.querySelector('#btn-stations');
       btnStation.addEventListener('click', () => {
         btnStation.classList.add('is-loading');
@@ -318,27 +325,24 @@ class VinFastDigitalTwin extends HTMLElement {
         }, 3000);
       });
 
-      // SỰ KIỆN LỌC TRẠM SẠC
       const btnFilter = this.querySelector('#btn-filter-station');
       btnFilter.addEventListener('click', () => {
           if (this._stationFilter === 'ALL') {
               this._stationFilter = 'DC';
               btnFilter.innerText = 'DC';
-              btnFilter.style.color = '#dc2626'; // Đỏ cam
+              btnFilter.style.color = '#dc2626'; 
           } else if (this._stationFilter === 'DC') {
               this._stationFilter = 'AC';
               btnFilter.innerText = 'AC';
-              btnFilter.style.color = '#16a34a'; // Xanh lá
+              btnFilter.style.color = '#16a34a'; 
           } else {
               this._stationFilter = 'ALL';
               btnFilter.innerText = 'ALL';
-              btnFilter.style.color = '#f59e0b'; // Vàng
+              btnFilter.style.color = '#f59e0b'; 
           }
-          // Gọi lại hàm vẽ trạm để lọc trực tiếp trên client
           this.renderStations();
       });
 
-      // SỰ KIỆN CHỌN CHUYẾN ĐI (DROPDOWN)
       const selectEl = this.querySelector('#trip-selector');
       selectEl.addEventListener('change', (e) => {
           if (!this._map || !this._polyline) return;
@@ -364,7 +368,6 @@ class VinFastDigitalTwin extends HTMLElement {
           }
       });
 
-      // SỰ KIỆN MÔ PHỎNG (REPLAY VỚI MŨI TÊN VÀ TỐC ĐỘ NỔI)
       const btnReplay = this.querySelector('#btn-replay');
       const iconReplay = this.querySelector('#icon-replay');
       
@@ -389,7 +392,6 @@ class VinFastDigitalTwin extends HTMLElement {
               iconReplay.setAttribute('icon', 'mdi:play-circle');
               btnReplay.style.backgroundColor = "#eff6ff";
               
-              // Trả icon về mũi tên hướng lên mặc định, không có tốc độ
               this._marker.setIcon(this.getCarIcon(0, null));
               this._marker.setLatLng([this._lastLat, this._lastLon]);
               
@@ -421,40 +423,42 @@ class VinFastDigitalTwin extends HTMLElement {
                       return;
                   }
 
-                  const pt = this._selectedRouteCoords[currentIdx]; // [lat, lng, speed]
+                  const pt = this._selectedRouteCoords[currentIdx];
                   
-                  // Tính góc xoay bằng cách nhìn về điểm tiếp theo
                   let angle = 0;
                   if (currentIdx < this._selectedRouteCoords.length - 1) {
                       const nextPt = this._selectedRouteCoords[currentIdx + 1];
                       angle = this.getBearing(pt[0], pt[1], nextPt[0], nextPt[1]);
                   } else if (currentIdx > 0) {
-                      // Nếu là điểm cuối, giữ nguyên góc của điểm trước đó
                       const prevPt = this._selectedRouteCoords[currentIdx - 1];
                       angle = this.getBearing(prevPt[0], prevPt[1], pt[0], pt[1]);
                   }
 
                   const simSpeed = pt.length > 2 ? pt[2] : 0;
                   
-                  // Cập nhật cả Đồng hồ tổng và Tốc độ nổi trên mũi tên
                   speedVal.innerText = simSpeed;
                   this._marker.setIcon(this.getCarIcon(angle, simSpeed));
                   this._marker.setLatLng([pt[0], pt[1]]);
 
                   currentIdx++;
-              }, 400); // Tốc độ chạy Replay
+              }, 400); 
           }
       });
     }
 
-    // ==========================================
-    // CẬP NHẬT TRẠNG THÁI TỪ HOME ASSISTANT
-    // ==========================================
     const name = getValidState(`sensor.${p}_ten_dinh_danh_xe`) || 'Xe VinFast';
     const status = getValidState(`sensor.${p}_trang_thai_hoat_dong`) || 'N/A';
     const gear = getValidState(`sensor.${p}_vi_tri_can_so`) || 'P';
     const speed = getValidState(`sensor.${p}_toc_do_hien_tai`) || '0';
     
+    // TẢI CÁC THÔNG SỐ ĐỂ HIỂN THỊ VÀO BẢNG STATS MỚI
+    const batt = getValidState(`sensor.${p}_phan_tram_pin`);
+    // Thử lấy Quãng đường dự kiến (App mới), nếu ko có thì lấy Thực tế đầy 100% pin
+    const range = getValidState(`sensor.${p}_quang_duong_du_kien`) || getValidState(`sensor.${p}_quang_duong_thuc_te_day_100_pin`);
+    const eff = getValidState(`sensor.${p}_hieu_suat_tieu_thu_trung_binh_xe`);
+    const ideal = getValidState(`sensor.${p}_dai_toc_do_toi_uu_nhat`);
+    const trip = getValidState(`sensor.${p}_quang_duong_chuyen_di_trip`);
+
     const odoRaw = getValidState(`sensor.${p}_tong_odo`);
     let odoClean = '--';
     if (odoRaw && !isNaN(odoRaw)) odoClean = Math.floor(parseFloat(odoRaw)).toString();
@@ -462,6 +466,13 @@ class VinFastDigitalTwin extends HTMLElement {
     this.querySelector('#vf-name').innerText = name;
     this.querySelector('#vf-status-badge').innerText = status;
     this.querySelector('#vf-odo-int').innerText = odoClean;
+    
+    // ĐỔ DỮ LIỆU VÀO BẢNG STATS
+    this.querySelector('#vf-stat-batt').innerText = batt ? batt + ' %' : '--';
+    this.querySelector('#vf-stat-range').innerText = range ? range + ' km' : '--';
+    this.querySelector('#vf-stat-eff').innerText = eff ? eff + ' kWh/100km' : '--';
+    this.querySelector('#vf-stat-ideal').innerText = ideal ? ideal : '--';
+    this.querySelector('#vf-stat-trip').innerText = trip ? trip + ' km' : '--';
 
     let rawImage = getValidState(`sensor.${p}_hinh_anh_xe_url`);
     if (!rawImage || rawImage.includes('unknown') || rawImage.trim() === '') {
@@ -502,7 +513,6 @@ class VinFastDigitalTwin extends HTMLElement {
     
     if (this._map && lat && lon) {
       if (!this._isReplaying) {
-          // Khi không Replay, xe đứng im thì không hiện góc xoay và tốc độ
           this._marker.setIcon(this.getCarIcon(0, null));
           this._marker.setLatLng([lat, lon]);
       }
@@ -523,11 +533,9 @@ class VinFastDigitalTwin extends HTMLElement {
           if (routePoints.length > 0) this._polyline.setLatLngs(routePoints);
       }
 
-      // Xử lý nạp dữ liệu Trạm sạc vào đệm và gọi hàm Render
       const stationSensor = hass.states[`sensor.${p}_tram_sac_lan_can`];
       if (stationSensor && stationSensor.attributes.stations && typeof L !== 'undefined') {
           const newStations = stationSensor.attributes.stations;
-          // Chỉ nạp lại đệm nếu API trả về danh sách mới khác độ dài
           if (this._currentStations.length !== newStations.length) {
               this._currentStations = newStations;
               this.renderStations();
