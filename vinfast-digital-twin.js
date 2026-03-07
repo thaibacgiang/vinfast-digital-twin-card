@@ -582,7 +582,7 @@ class VinFastDigitalTwin extends HTMLElement {
 
     let rawImage = getValidState(`sensor.${p}_hinh_anh_xe_url`);
     if (!rawImage || rawImage.includes('unknown') || rawImage.trim() === '') {
-        rawImage = 'https://shop.vinfastauto.com/on/demandware.static/-/Sites-app_vinfast_vn-Library/default/dw15d3dc68/images/PDP/vf9/M/M.png';
+        rawImage = 'https://shop.vinfastauto.com/on/demandware.static/-/Sites-vinfast_vn_master/default/dwae69d888/images/VF6/CB12V/CE18.png';
     }
     const imgEl = this.querySelector('#vf-car-img');
     if (imgEl.src !== rawImage) imgEl.src = rawImage;
