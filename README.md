@@ -70,7 +70,9 @@ Bỏ chữ sensor. ở đầu và bỏ phần chức năng _phan_tram_pin ở cu
 
 📸 Ảnh chụp màn hình (Screenshots)
 
-<img width="1224" height="2700" alt="image" src="https://github.com/user-attachments/assets/d5b1666f-5321-4d29-8ed7-5c3807aa52fd" />
+<img width="500" alt="image" src="https://github.com/user-attachments/assets/d5b1666f-5321-4d29-8ed7-5c3807aa52fd" />
+<img width="500"  alt="image" src="https://github.com/user-attachments/assets/59173aa8-d57f-4b66-93a3-149934806b94" />
+<img width="500"  alt="image" src="https://github.com/user-attachments/assets/9577a9b1-3417-4d9f-87ce-ec4a8c8f3ee1" />
 
 <p align="center">
 <b>Giao diện hiển thị Gọn gàng - Responsive 100% trên cả Điện thoại và Tablet.</b>
