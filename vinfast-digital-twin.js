@@ -22,7 +22,6 @@ class VinFastDigitalTwin extends HTMLElement {
     this._rawRouteCoords = []; 
     this._smoothedRouteCoords = []; 
 
-    // LƯU TRỮ VÀ KHÔI PHỤC TRẠNG THÁI BỘ LỌC TRẠM SẠC
     this._showStations = localStorage.getItem('vf_show_stations') === 'true';
     this._stationFilter = localStorage.getItem('vf_station_filter') || 'ALL'; 
     this._currentStations = []; 
@@ -34,13 +33,17 @@ class VinFastDigitalTwin extends HTMLElement {
     this._entityPrefix = null; 
     this._lastAiMessage = ""; 
 
-    // BIẾN CHO CHẾ ĐỘ HISTORY
     this._tripsData = {}; 
     this._dayStats = {};  
     this._currentDate = new Date(); 
     this._todayStr = this.formatDate(this._currentDate);
     this._selectedDateStr = 'LIVE'; 
     this._addressCache = {};
+    
+    // Biến cho thống kê năng lượng
+    this._energyStats = {};
+    this._currentYear = new Date().getFullYear();
+    this._energyChart = null;
   }
 
   safeParseJSON(str) {
@@ -112,6 +115,7 @@ class VinFastDigitalTwin extends HTMLElement {
               this._chargeHistoryData = await res.json();
               const box = this.querySelector('#box-charge');
               if (box && box.classList.contains('active-box')) this.renderChargeHistory();
+              this.loadEnergyStats(this._currentYear);
           }
       } catch(e) {}
   }
@@ -128,35 +132,10 @@ class VinFastDigitalTwin extends HTMLElement {
         }
     } catch(e) {}
 
-    let d = new Date();
-    for (let i = 0; i < 6; i++) {
-        let y = d.getFullYear();
-        let m = String(d.getMonth() + 1).padStart(2, '0');
-        let archUrl = `/local/vinfast_trips_archive_${vinStr}_${y}_${m}.json`;
-        try {
-            const resArch = await fetch(`${archUrl}?v=${new Date().getTime()}`);
-            if (resArch.ok) {
-                const dataArch = await resArch.json();
-                if (Array.isArray(dataArch)) allTripsRaw = allTripsRaw.concat(dataArch);
-            }
-        } catch(e) {}
-        d.setMonth(d.getMonth() - 1); 
-    }
-
-    let uniqueTripsMap = new Map();
-    allTripsRaw.forEach(trip => {
-        let tId = trip.id || trip.timestamp;
-        if (!uniqueTripsMap.has(tId)) {
-            uniqueTripsMap.set(tId, trip);
-        }
-    });
-    
-    let rawTrips = Array.from(uniqueTripsMap.values());
-
-    if (rawTrips && Array.isArray(rawTrips) && rawTrips.length > 0) {
+    if (allTripsRaw && Array.isArray(allTripsRaw) && allTripsRaw.length > 0) {
         let groupedData = {};
         
-        rawTrips.forEach(trip => {
+        allTripsRaw.forEach(trip => {
             let dateStr = "";
             if (trip.date && typeof trip.date === 'string') {
                 let parts = trip.date.split(/[-/]/);
@@ -227,6 +206,7 @@ class VinFastDigitalTwin extends HTMLElement {
     
     this.renderCalendar();
     this.switchMode();
+    this.loadEnergyStats(this._currentYear);
   }
 
   cleanRouteData(points) {
@@ -343,12 +323,12 @@ class VinFastDigitalTwin extends HTMLElement {
               }
 
               let ratio = st.total > 0 ? (st.avail / st.total) * 100 : 0;
-              let pinColor = '', statusText = '';
-              if (st.total === 0 || st.avail === 0) { pinColor = '#dc2626'; statusText = 'Hết chỗ'; }
-              else if (ratio < 30) { pinColor = '#f97316'; statusText = 'Sắp kín'; }
-              else if (ratio < 50) { pinColor = '#eab308'; statusText = 'Đông'; }
-              else if (ratio < 80) { pinColor = '#0ea5e9'; statusText = 'Trống'; }
-              else { pinColor = '#16a34a'; statusText = 'Vắng'; }
+              let pinColor = '';
+              if (st.total === 0 || st.avail === 0) { pinColor = '#dc2626'; }
+              else if (ratio < 30) { pinColor = '#f97316'; }
+              else if (ratio < 50) { pinColor = '#eab308'; }
+              else if (ratio < 80) { pinColor = '#0ea5e9'; }
+              else { pinColor = '#16a34a'; }
 
               let boltCount = st.power >= 120 ? 3 : (st.power >= 20 ? 2 : 1);
               let boltsHtml = Array(boltCount).fill(`<ha-icon icon="mdi:flash" style="--mdc-icon-size: 16px; margin: 0 -2px;"></ha-icon>`).join('');
@@ -762,6 +742,199 @@ class VinFastDigitalTwin extends HTMLElement {
     }
   }
 
+  // ===============================================
+  // THỐNG KÊ ĐIỆN NĂNG THEO THÁNG (BIỂU ĐỒ)
+  // ===============================================
+  async loadEnergyStats(year) {
+      if (!this._entityPrefix) return;
+      
+      const p = this._entityPrefix;
+      const monthlyData = {};
+      for (let i = 1; i <= 12; i++) {
+          monthlyData[i] = {
+              energy: 0,
+              distance: 0,
+              cost: 0,
+              trips: 0
+          };
+      }
+      
+      // Đọc dữ liệu từ charge history
+      if (this._chargeHistoryData && this._chargeHistoryData.length > 0) {
+          this._chargeHistoryData.forEach(charge => {
+              if (!charge.date) return;
+              
+              let parts = charge.date.split(/[/-]/);
+              let chargeYear = null, chargeMonth = null;
+              
+              if (parts.length === 3) {
+                  if (parts[0].length === 4) {
+                      chargeYear = parseInt(parts[0]);
+                      chargeMonth = parseInt(parts[1]);
+                  } else {
+                      chargeYear = parseInt(parts[2]);
+                      chargeMonth = parseInt(parts[1]);
+                  }
+              }
+              
+              if (chargeYear === year && chargeMonth >= 1 && chargeMonth <= 12) {
+                  let kwh = parseFloat(charge.kwh) || 0;
+                  monthlyData[chargeMonth].energy += kwh;
+                  monthlyData[chargeMonth].cost += kwh * 3000;
+                  monthlyData[chargeMonth].trips++;
+              }
+          });
+      }
+      
+      // Đọc dữ liệu từ trip history
+      for (let dateStr in this._tripsData) {
+          if (this._tripsData.hasOwnProperty(dateStr)) {
+              let [tripYear, tripMonth, tripDay] = dateStr.split('-');
+              if (parseInt(tripYear) === year) {
+                  const month = parseInt(tripMonth);
+                  const trips = this._tripsData[dateStr];
+                  let monthDistance = 0;
+                  
+                  trips.forEach(trip => {
+                      monthDistance += trip.distance || 0;
+                  });
+                  
+                  monthlyData[month].distance += monthDistance;
+              }
+          }
+      }
+      
+      this._energyStats[year] = monthlyData;
+      this.renderEnergyChart(year);
+      this.renderEnergyTable(year);
+  }
+
+  renderEnergyChart(year) {
+      const canvas = this.querySelector('#energy-chart');
+      if (!canvas) return;
+      
+      const data = this._energyStats[year] || {};
+      const monthNames = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12'];
+      const energyData = [];
+      let maxEnergy = 0;
+      
+      for (let i = 1; i <= 12; i++) {
+          let val = data[i]?.energy || 0;
+          energyData.push(val);
+          if (val > maxEnergy) maxEnergy = val;
+      }
+      
+      // Xóa biểu đồ cũ nếu có
+      if (this._energyChart) {
+          this._energyChart.destroy();
+      }
+      
+      // Lấy context và vẽ biểu đồ mới
+      const ctx = canvas.getContext('2d');
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      canvas.width = width;
+      canvas.height = height;
+      
+      const barWidth = (width - 60) / 12 - 4;
+      const maxBarHeight = height - 50;
+      
+      ctx.clearRect(0, 0, width, height);
+      
+      // Vẽ trục
+      ctx.beginPath();
+      ctx.strokeStyle = '#64748b';
+      ctx.fillStyle = '#64748b';
+      ctx.font = '10px sans-serif';
+      
+      // Trục Y
+      ctx.moveTo(40, 10);
+      ctx.lineTo(40, height - 30);
+      ctx.lineTo(width - 10, height - 30);
+      ctx.stroke();
+      
+      // Vẽ cột
+      for (let i = 0; i < 12; i++) {
+          const x = 45 + i * (barWidth + 8);
+          const barHeight = maxEnergy > 0 ? (energyData[i] / maxEnergy) * maxBarHeight : 0;
+          const y = height - 30 - barHeight;
+          
+          // Vẽ cột
+          ctx.fillStyle = energyData[i] > 0 ? '#3b82f6' : '#cbd5e1';
+          ctx.fillRect(x, y, barWidth, barHeight);
+          
+          // Vẽ tên tháng
+          ctx.fillStyle = '#475569';
+          ctx.fillText(monthNames[i], x + 2, height - 18);
+          
+          // Vẽ giá trị
+          if (energyData[i] > 0) {
+              ctx.fillStyle = '#1e293b';
+              ctx.fillText(energyData[i], x + 2, y - 2);
+          }
+      }
+      
+      // Vẽ giá trị max trên trục Y
+      if (maxEnergy > 0) {
+          ctx.fillStyle = '#64748b';
+          ctx.fillText(maxEnergy, 10, 15);
+          ctx.fillText(Math.round(maxEnergy / 2), 10, maxBarHeight / 2 + 15);
+          ctx.fillText(0, 10, height - 25);
+      }
+      
+      // Cập nhật tổng kết
+      this.updateEnergySummary(year);
+  }
+
+  renderEnergyTable(year) {
+      const tbody = this.querySelector('#energy-stats-table-body');
+      if (!tbody) return;
+      
+      const data = this._energyStats[year] || {};
+      const monthNames = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
+      
+      let html = '';
+      for (let i = 1; i <= 12; i++) {
+          const monthData = data[i] || { energy: 0, distance: 0, cost: 0 };
+          const efficiency = monthData.distance > 0 ? ((monthData.energy / monthData.distance) * 100).toFixed(1) : '--';
+          
+          html += `
+              <tr>
+                  <td style="padding: 8px; text-align: left; font-weight: 500;">${monthNames[i-1]}</td>
+                  <td style="padding: 8px; text-align: right;">${monthData.energy.toFixed(1)} kWh</td>
+                  <td style="padding: 8px; text-align: right;">${monthData.distance.toFixed(1)} km</td>
+                  <td style="padding: 8px; text-align: right;">${efficiency !== '--' ? efficiency : '--'} kWh/100km</td>
+                  <td style="padding: 8px; text-align: right;">${monthData.cost.toLocaleString()} VNĐ</td>
+              </tr>
+          `;
+      }
+      
+      tbody.innerHTML = html;
+  }
+
+  updateEnergySummary(year) {
+      const data = this._energyStats[year] || {};
+      let totalEnergy = 0, totalDistance = 0, totalCost = 0;
+      
+      for (let i = 1; i <= 12; i++) {
+          totalEnergy += data[i]?.energy || 0;
+          totalDistance += data[i]?.distance || 0;
+          totalCost += data[i]?.cost || 0;
+      }
+      
+      const avgEfficiency = totalDistance > 0 ? ((totalEnergy / totalDistance) * 100).toFixed(1) : '--';
+      
+      const totalEnergyEl = this.querySelector('#total-energy-year');
+      const totalDistanceEl = this.querySelector('#total-distance-year');
+      const totalCostEl = this.querySelector('#total-cost-year');
+      const avgEfficiencyEl = this.querySelector('#avg-efficiency-year');
+      
+      if (totalEnergyEl) totalEnergyEl.innerText = totalEnergy.toFixed(1);
+      if (totalDistanceEl) totalDistanceEl.innerText = totalDistance.toFixed(1);
+      if (totalCostEl) totalCostEl.innerText = totalCost.toLocaleString();
+      if (avgEfficiencyEl) avgEfficiencyEl.innerText = avgEfficiency !== '--' ? `${avgEfficiency} kWh/100km` : '--';
+  }
+
   initMap() {
     const mapEl = this.querySelector('#vf-map-canvas');
     if (!mapEl || typeof L === 'undefined' || this._map) return;
@@ -892,7 +1065,6 @@ class VinFastDigitalTwin extends HTMLElement {
                                   <div style="display:flex; align-items:center; gap:6px; color:var(--secondary-text-color, #475569);"><ha-icon icon="mdi:leaf-off" style="color:#ef4444; --mdc-icon-size:16px;"></ha-icon>Hao hụt dự kiến:</div>
                                   <b id="dt-range-drop-trip" style="font-size:13px; color:#ef4444;">--</b>
                               </div>
-                              <!-- PHẦN CẮM SẠC LÚC VÀ RÚT SẠC LÚC -->
                               <div style="display:flex; gap:6px;">
                                   <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; background:var(--primary-background-color, white); padding:6px; border-radius:8px; border:1px solid var(--divider-color, #e2e8f0);">
                                       <div style="font-size:10px; color:var(--secondary-text-color, #475569);">CẮM SẠC LÚC</div>
@@ -954,6 +1126,69 @@ class VinFastDigitalTwin extends HTMLElement {
                 </div>
               </div>
               
+              <!-- THỐNG KÊ ĐIỆN NĂNG THEO THÁNG -->
+              <div class="stat-box clickable" id="box-energy-stats">
+                <div class="box-main">
+                  <ha-icon icon="mdi:chart-line" style="color: #8b5cf6;"></ha-icon>
+                  <div class="stat-info">
+                    <div class="stat-label">ĐIỆN NĂNG</div>
+                    <div class="stat-val" id="vf-stat-energy-month">--</div>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="stat-detail-container" id="detail-container-4">
+                <div class="stat-detail-content" id="detail-energy-stats" style="padding: 15px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+                    <div style="font-weight: bold; color: var(--primary-text-color);">
+                      <ha-icon icon="mdi:calendar-month" style="--mdc-icon-size: 18px; margin-right: 6px;"></ha-icon>
+                      Thống kê điện năng theo tháng
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                      <select id="energy-year-selector" style="background: var(--secondary-background-color); border: 1px solid var(--divider-color); border-radius: 6px; padding: 4px 8px; font-size: 12px;">
+                        <option value="2024">2024</option>
+                        <option value="2025">2025</option>
+                        <option value="2026">2026</option>
+                      </select>
+                      <button id="refresh-energy-stats" style="background: #2563eb; color: white; border: none; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px;">
+                        <ha-icon icon="mdi:refresh" style="--mdc-icon-size: 14px;"></ha-icon>
+                        Cập nhật
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <!-- Biểu đồ cột -->
+                  <canvas id="energy-chart" style="width: 100%; height: 250px; margin-bottom: 15px; background: var(--card-background-color); border-radius: 12px;"></canvas>
+                  
+                  <!-- Bảng thống kê chi tiết -->
+                  <div style="overflow-x: auto;">
+                    <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                      <thead>
+                        <tr style="background: var(--secondary-background-color);">
+                          <th style="padding: 8px; text-align: left;">Tháng</th>
+                          <th style="padding: 8px; text-align: right;">Điện năng (kWh)</th>
+                          <th style="padding: 8px; text-align: right;">Quãng đường (km)</th>
+                          <th style="padding: 8px; text-align: right;">Hiệu suất (kWh/100km)</th>
+                          <th style="padding: 8px; text-align: right;">Chi phí (VNĐ)</th>
+                        </tr>
+                      </thead>
+                      <tbody id="energy-stats-table-body">
+                        <tr><td colspan="5" style="text-align: center;">Đang tải dữ liệu...</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  <div style="margin-top: 15px; padding: 10px; background: var(--secondary-background-color); border-radius: 8px; font-size: 11px; color: var(--secondary-text-color);">
+                    <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                      <div><span>📊 Tổng điện năng: </span><b id="total-energy-year" style="color: #2563eb;">--</b> kWh</div>
+                      <div><span>📈 Tổng quãng đường: </span><b id="total-distance-year" style="color: #10b981;">--</b> km</div>
+                      <div><span>💰 Tổng chi phí: </span><b id="total-cost-year" style="color: #f59e0b;">--</b> VNĐ</div>
+                      <div><span>⚡ Hiệu suất TB: </span><b id="avg-efficiency-year" style="color: #8b5cf6;">--</b> kWh/100km</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div class="stat-detail-container" id="detail-container-3">
                   <div class="stat-detail-content" id="detail-trip">
                       <div class="detail-row"><span>Tốc độ trung bình:</span> <b id="dt-trip-avg-speed">--</b></div>
@@ -1206,6 +1441,20 @@ class VinFastDigitalTwin extends HTMLElement {
         .marker-pause { background: #f59e0b; border: 2px solid white; border-radius: 50%; color: white; display: flex; justify-content: center; align-items: center; font-size: 10px; font-weight: bold; width: 18px !important; height: 18px !important; margin-top:-9px; margin-left:-9px; box-shadow: 0 3px 6px rgba(0,0,0,0.3);}
         .marker-end-flag { font-size: 20px; line-height: 1; filter: drop-shadow(0 3px 3px rgba(0,0,0,0.3)); margin-top:-20px; margin-left:-10px;}
         .marker-continue { background: #3b82f6; border: 2px solid white; border-radius: 50%; color: white; display: flex; justify-content: center; align-items: center; font-size: 10px; font-weight: bold; width: 18px !important; height: 18px !important; margin-top:-9px; margin-left:-9px; box-shadow: 0 3px 6px rgba(0,0,0,0.3);}
+        
+        /* Style cho biểu đồ và bảng thống kê */
+        #energy-chart {
+          background: var(--card-background-color, white);
+          border-radius: 12px;
+          padding: 10px;
+        }
+        #energy-stats-table-body tr:hover {
+          background: var(--secondary-background-color, #f3f4f6);
+        }
+        #energy-stats-table-body td {
+          padding: 6px 8px;
+          border-bottom: 1px solid var(--divider-color, #e5e7eb);
+        }
       `;
       this.appendChild(style);
 
@@ -1233,7 +1482,9 @@ class VinFastDigitalTwin extends HTMLElement {
       this.querySelector('#btn-next-month').addEventListener('click', () => this.changeMonth(1));
 
       this.toggleExpand = (boxId, detailId, containerId) => {
-          const box = this.querySelector(boxId); const detail = this.querySelector(detailId); const container = this.querySelector(containerId);
+          const box = this.querySelector(boxId); 
+          const detail = this.querySelector(detailId); 
+          const container = this.querySelector(containerId);
           if (!box || !detail || !container) return;
           const isExpanded = box.classList.contains('active-box');
           this.querySelectorAll('.stat-box').forEach(el => el.classList.remove('active-box'));
@@ -1241,8 +1492,13 @@ class VinFastDigitalTwin extends HTMLElement {
           this.querySelectorAll('.stat-detail-content').forEach(el => el.style.display = 'none');
           
           if (!isExpanded) {
-              box.classList.add('active-box'); container.style.display = 'block'; detail.style.display = 'block';
+              box.classList.add('active-box'); 
+              container.style.display = 'block'; 
+              detail.style.display = 'block';
               if (boxId === '#box-charge') this.renderChargeHistory();
+              if (boxId === '#box-energy-stats') {
+                  this.loadEnergyStats(this._currentYear);
+              }
           }
       };
 
@@ -1254,9 +1510,13 @@ class VinFastDigitalTwin extends HTMLElement {
           aiHeader.onclick = () => {
               const isCollapsed = aiContent.style.maxHeight === '0px';
               if (isCollapsed) {
-                  aiContent.style.maxHeight = '500px'; aiContent.style.marginTop = '8px'; aiChevron.style.transform = 'rotate(0deg)';
+                  aiContent.style.maxHeight = '500px'; 
+                  aiContent.style.marginTop = '8px'; 
+                  aiChevron.style.transform = 'rotate(0deg)';
               } else {
-                  aiContent.style.maxHeight = '0px'; aiContent.style.marginTop = '0px'; aiChevron.style.transform = 'rotate(180deg)';
+                  aiContent.style.maxHeight = '0px'; 
+                  aiContent.style.marginTop = '0px'; 
+                  aiChevron.style.transform = 'rotate(180deg)';
               }
           };
       }
@@ -1266,7 +1526,6 @@ class VinFastDigitalTwin extends HTMLElement {
           if (!listEl) return;
           let html = '';
           if (this._chargeHistoryData && this._chargeHistoryData.length > 0) {
-              // Lấy 3 lần sạc gần nhất
               const recentCharges = this._chargeHistoryData.slice(0, 3);
               recentCharges.forEach(c => {
                   html += `<div style="padding:8px 0; border-bottom:1px solid var(--divider-color, #e5e7eb);">
@@ -1305,7 +1564,8 @@ class VinFastDigitalTwin extends HTMLElement {
       attachClick('#box-eff', '#detail-eff', '#detail-container-2');
       attachClick('#box-speed', '#detail-speed', '#detail-container-2'); 
       attachClick('#box-trip', '#detail-trip', '#detail-container-3');
-      attachClick('#box-charge', '#detail-charge', '#detail-container-3'); 
+      attachClick('#box-charge', '#detail-charge', '#detail-container-3');
+      attachClick('#box-energy-stats', '#detail-energy-stats', '#detail-container-4');
 
       const btnLocate = this.querySelector('#btn-locate');
       if (btnLocate) btnLocate.onclick = () => { 
@@ -1357,6 +1617,24 @@ class VinFastDigitalTwin extends HTMLElement {
               localStorage.setItem('vf_station_filter', this._stationFilter);
               this.renderStations();
           };
+      }
+
+      // Xử lý chọn năm và refresh thống kê năng lượng
+      const yearSelector = this.querySelector('#energy-year-selector');
+      const refreshBtn = this.querySelector('#refresh-energy-stats');
+      
+      if (yearSelector) {
+          yearSelector.value = this._currentYear;
+          yearSelector.addEventListener('change', (e) => {
+              this._currentYear = parseInt(e.target.value);
+              this.loadEnergyStats(this._currentYear);
+          });
+      }
+      
+      if (refreshBtn) {
+          refreshBtn.addEventListener('click', () => {
+              this.loadEnergyStats(this._currentYear);
+          });
       }
 
       const callServiceBtn = (btnId, domain, service, entityId) => {
@@ -1548,9 +1826,6 @@ class VinFastDigitalTwin extends HTMLElement {
         doorsEl.innerHTML = securityHtml;
     }
 
-    // ===============================================
-    // PHỤC HỒI LOGIC CẬP NHẬT THẺ ĐANG SẠC
-    // ===============================================
     const chargingBanner = this.querySelector('#vf-charging-banner');
     const isCharging = statusTextRaw && (statusTextRaw.toLowerCase().includes('sạc') || statusTextRaw.toLowerCase().includes('hoàn tất'));
     
@@ -1676,9 +1951,7 @@ class VinFastDigitalTwin extends HTMLElement {
     const dtSohEl = this.querySelector('#dt-soh'); if (dtSohEl) dtSohEl.innerText = getValidState('suc_khoe_pin_soh_tinh_toan') ? `${getValidState('suc_khoe_pin_soh_tinh_toan')}%` : '--';
     const dtChargeEffEl = this.querySelector('#dt-charge-eff'); if (dtChargeEffEl) dtChargeEffEl.innerText = getValidState('hieu_suat_sac_thuc_te_lan_cuoi') ? `${getValidState('hieu_suat_sac_thuc_te_lan_cuoi')}%` : '--';
     
-    // ===============================================
     // CẮM SẠC LÚC & RÚT SẠC LÚC - HIỂN THỊ CHI TIẾT THỜI GIAN
-    // ===============================================
     const dtChargeSocStartEl = this.querySelector('#dt-charge-soc-start');
     const dtChargeStartTimeEl = this.querySelector('#dt-charge-start-time-value');
     const dtChargeSocEndEl = this.querySelector('#dt-charge-soc-end');
@@ -1781,9 +2054,16 @@ class VinFastDigitalTwin extends HTMLElement {
         else addressEl.innerText = "Đang tìm vị trí...";
     }
 
-    // ===============================================
-    // PHỤC HỒI LOGIC ĐỔI VIỀN ĐỎ THẺ PIN (TỪ NGƯỜI DÙNG)
-    // ===============================================
+    // Cập nhật giá trị hiển thị cho thẻ ĐIỆN NĂNG (hiển thị tổng điện năng năm hiện tại)
+    const energyMonthEl = this.querySelector('#vf-stat-energy-month');
+    if (energyMonthEl && this._energyStats[this._currentYear]) {
+        let totalEnergy = 0;
+        for (let i = 1; i <= 12; i++) {
+            totalEnergy += this._energyStats[this._currentYear][i]?.energy || 0;
+        }
+        energyMonthEl.innerHTML = `${totalEnergy.toFixed(0)}<span class="stat-unit">kWh</span>`;
+    }
+
     if (batt && !isNaN(batt)) {
         const battNum = parseFloat(batt); 
         const stageEl = this.querySelector('#vf-car-stage');
@@ -1880,397 +2160,3 @@ class VinFastDigitalTwin extends HTMLElement {
 }
 
 if (!customElements.get('vinfast-digital-twin')) customElements.define('vinfast-digital-twin', VinFastDigitalTwin);
-
-class VinFastDebugCard extends HTMLElement {
-  setConfig(config) {
-    if (!config.entity) {
-      throw new Error('Bạn cần khai báo entity của cảm biến System Debug Raw Data');
-    }
-    this.config = config;
-    this.activeTab = 'log'; 
-    this.filterText = '';
-    this._logData = [];
-    this._rawJsonData = {};
-    
-    this._aliases = JSON.parse(localStorage.getItem('vf_debug_aliases') || '{}');
-
-    this._dictionary = {
-        "34183_00001_00009": { name: "Mức Pin (SOC %)", parse: v => `${v}%` },
-        "34180_00001_00011": { name: "Mức Pin BMS (SOC %)", parse: v => `${v}%` },
-        "34199_00000_00000": { name: "ODO (km)", parse: v => `${v} km` },
-        "34183_00001_00003": { name: "ODO (km)", parse: v => `${v} km` },
-        "34180_00001_00021": { name: "Điện áp 12V", parse: v => `${v} V` },
-        "34180_00001_00014": { name: "Nhiệt độ Pin HV", parse: v => `${v} °C` },
-        "34220_00001_00001": { name: "Độ chai Pin (SOH %)", parse: v => `${v}%` },
-        "34193_00001_00009": { name: "Quãng đường dự kiến", parse: v => `${v} km` },
-        "34193_00001_00005": { name: "Trạng thái Sạc", parse: v => v == 1 ? "Đang sạc" : (v == 2 ? "Ngắt sạc" : "Lỗi/Rút súng") },
-
-        "34183_00000_00001": { name: "Cửa Tổng", parse: v => v == 1 ? "Mở" : "Đóng" },
-        "34206_00001_00001": { name: "Khóa cửa (Lock)", parse: v => v == 1 ? "Đã khóa" : "Chưa khóa" },
-        "34234_00001_00003": { name: "Cốp sau (Trunk)", parse: v => v == 1 ? "Mở" : "Đóng" },
-        "34234_00001_00002": { name: "Nắp Capo (Frunk)", parse: v => v == 1 ? "Mở" : "Đóng" },
-        
-        "34213_00002_00003": { name: "Kính Lái (Trước Trái)", parse: v => v == 1 ? "Mở" : "Đóng" },
-        "34213_00002_00004": { name: "Kính Phụ (Trước Phải)", parse: v => v == 1 ? "Mở" : "Đóng" },
-        "34213_00002_00005": { name: "Kính Sau Trái", parse: v => v == 1 ? "Mở" : "Đóng" },
-        "34213_00002_00006": { name: "Kính Sau Phải", parse: v => v == 1 ? "Mở" : "Đóng" },
-
-        "34196_00001_00003": { name: "Áp suất Lốp Trước Trái", parse: v => `${(v/10).toFixed(1)} Bar` },
-        "34196_00001_00005": { name: "Áp suất Lốp Trước Phải", parse: v => `${(v/10).toFixed(1)} Bar` },
-        "34196_00001_00007": { name: "Áp suất Lốp Sau Trái", parse: v => `${(v/10).toFixed(1)} Bar` },
-        "34196_00001_00009": { name: "Áp suất Lốp Sau Phải", parse: v => `${(v/10).toFixed(1)} Bar` },
-
-        "10351_00006_00050": { name: "Điều hòa (AC)", parse: v => v == 1 ? "Bật" : "Tắt" },
-        "10351_00006_00052": { name: "Nhiệt độ Điều hòa", parse: v => `${v} °C` },
-        "10351_00006_00015": { name: "Nhiệt độ Môi trường", parse: v => `${v} °C` },
-        
-        "56789_00001_00005": { name: "Đèn Pha", parse: v => v == 1 ? "Bật" : "Tắt" },
-        "34185_00001_00001": { name: "GPS Lat", parse: v => v },
-        "34185_00001_00002": { name: "GPS Lon", parse: v => v },
-        "34185_00001_00003": { name: "Tốc độ (Speed)", parse: v => `${v} km/h` },
-        "34185_00001_00004": { name: "Hướng di chuyển", parse: v => `${v}°` }
-    };
-  }
-
-  set hass(hass) {
-    this._hass = hass;
-    const entityId = this.config.entity;
-    const stateObj = hass.states[entityId];
-
-    if (!stateObj) {
-      this.innerHTML = `<ha-card><div style="padding: 20px; color: red;">Không tìm thấy thực thể: ${entityId}</div></ha-card>`;
-      return;
-    }
-
-    if (!this.content) {
-      this.initUI();
-      this.content = true;
-    }
-
-    if (stateObj.attributes) {
-        let tempRaw = {};
-        for (let key in stateObj.attributes) {
-            if (key !== "friendly_name" && key !== "icon" && key !== "Chi tiết") {
-                tempRaw[key] = stateObj.attributes[key];
-            }
-        }
-        this._rawJsonData = tempRaw;
-
-        let newLogData = [];
-        let nowStr = new Date().toLocaleTimeString('vi-VN', { hour12: false });
-        
-        for (let [code, val] of Object.entries(this._rawJsonData)) {
-            let isExists = this._logData.find(item => item.code === code);
-            if (!isExists || isExists.new_value !== val) {
-                newLogData.push({
-                    time: nowStr,
-                    code: code,
-                    old_value: isExists ? isExists.new_value : "NEW",
-                    new_value: val,
-                    status: (this._aliases[code] || this._dictionary[code]) ? "KNOWN" : "UNKNOWN"
-                });
-            }
-        }
-        
-        if (newLogData.length > 0) {
-            this._logData = [...newLogData, ...this._logData].slice(0, 100);
-            this.renderBody();
-        }
-    }
-  }
-
-  initUI() {
-    this.innerHTML = `
-      <ha-card class="debug-card">
-        <div class="debug-header">
-          <div>
-            <ha-icon icon="mdi:console-network" style="color:#10b981; margin-right:8px;"></ha-icon>
-            VINFAST REVERSE ENGINEER
-          </div>
-          <div id="debug-status-text" class="debug-status">Đang tải dữ liệu...</div>
-        </div>
-        
-        <div class="debug-toolbar">
-          <input type="text" id="debug-search" class="debug-search" placeholder="🔍 Nhập mã (VD: 34213) hoặc tên để lọc...">
-          <div class="debug-tabs">
-            <button id="btn-tab-log" class="debug-tab active" data-target="log">Sự kiện Live</button>
-            <button id="btn-tab-raw" class="debug-tab" data-target="raw">Raw JSON</button>
-            <button id="btn-tab-report" class="debug-tab" data-target="report" style="color: #f59e0b;"><ha-icon icon="mdi:github" style="width:14px;height:14px;"></ha-icon> Báo cáo</button>
-          </div>
-        </div>
-
-        <div class="debug-body">
-          <div id="view-log" class="debug-view"></div>
-          <pre id="view-raw" class="debug-view" style="display: none;"></pre>
-          <div id="view-report" class="debug-view" style="display: none;"></div>
-        </div>
-      </ha-card>
-    `;
-
-    const style = document.createElement('style');
-    style.textContent = `
-      .debug-card { background: #0f172a; color: #e2e8f0; font-family: monospace; border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); border: 1px solid #1e293b;}
-      .debug-header { background: #1e293b; padding: 12px 16px; font-size: 14px; font-weight: bold; border-bottom: 1px solid #334155; display:flex; align-items:center; justify-content: space-between; letter-spacing: 1px; color:#10b981;}
-      .debug-status { font-size: 11px; font-weight: normal; color: #94a3b8; text-transform: none; letter-spacing: 0;}
-      
-      .debug-toolbar { padding: 12px; background: #0f172a; border-bottom: 1px solid #1e293b; }
-      .debug-search { width: 100%; padding: 10px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #38bdf8; font-family: monospace; font-size: 13px; outline: none; margin-bottom: 10px; transition: border 0.2s; box-sizing: border-box;}
-      .debug-search:focus { border-color: #38bdf8; }
-      
-      .debug-tabs { display: flex; gap: 8px; }
-      .debug-tab { background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-family: monospace; font-size: 12px; font-weight: bold; flex: 1; transition: all 0.2s; display: flex; justify-content: center; align-items: center; gap: 4px;}
-      .debug-tab:hover { background: #334155; color: white;}
-      .debug-tab.active { background: #38bdf8; color: #0f172a; border-color: #38bdf8;}
-      .debug-tab.active[data-target="report"] { background: #f59e0b; border-color: #f59e0b; color: #0f172a;}
-      
-      .debug-body { padding: 12px; height: 500px; overflow-y: auto; }
-      .debug-body::-webkit-scrollbar { width: 8px; }
-      .debug-body::-webkit-scrollbar-track { background: #0f172a; }
-      .debug-body::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-      
-      .log-item { padding: 12px 10px; border-bottom: 1px dashed #1e293b; font-size: 13px; line-height: 1.5; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;}
-      .log-left { display: flex; flex-direction: column; flex: 1;}
-      .log-time { color: #64748b; font-size: 11px; margin-bottom: 4px;}
-      .log-code { color: #f43f5e; font-weight: bold; letter-spacing: 0.5px;}
-      .log-name-input { background: transparent; border: 1px dashed #334155; color: #e2e8f0; font-family: monospace; font-size: 13px; padding: 4px; border-radius: 4px; width: 90%; outline: none;}
-      .log-name-input:focus { border-color: #10b981; border-style: solid; background: rgba(16, 185, 129, 0.1); }
-      
-      .log-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px;}
-      .log-val-box { background: #1e293b; padding: 4px 10px; border-radius: 20px; border: 1px solid #334155; display: flex; align-items: center;}
-      .log-val-old { color: #94a3b8; text-decoration: line-through; margin: 0 4px;}
-      .log-arrow { color: #10b981; margin: 0 4px;}
-      .log-val-new { color: #10b981; font-weight: bold; font-size: 14px;}
-      
-      #view-raw { margin: 0; font-size: 13px; color: #38bdf8; white-space: pre-wrap; word-break: break-all;}
-
-      .report-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
-      .report-table th { background: #1e293b; padding: 8px; text-align: left; position: sticky; top: 0; z-index: 2; border-bottom: 2px solid #334155; color: #94a3b8;}
-      .report-table td { padding: 6px 8px; border-bottom: 1px solid #1e293b; vertical-align: middle; word-wrap: break-word;}
-      .report-row.unknown { background: rgba(245, 158, 11, 0.05); }
-      .report-row:hover { background: rgba(255,255,255,0.05); }
-      .rep-input { width: 90%; background: #0f172a; color: #38bdf8; border: 1px solid #334155; padding: 6px; border-radius: 4px; font-family: monospace; outline: none; transition: border 0.2s;}
-      .rep-input:focus { border-color: #f59e0b; background: rgba(245, 158, 11, 0.1); color: #fff;}
-      
-      .guide-box { background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #e2e8f0; font-size: 13px; line-height: 1.6; }
-      .guide-step { font-weight: bold; color: #10b981;}
-      
-      #btn-submit-github { width: 100%; padding: 12px; margin-top: 15px; background: #24292e; color: white; border: 1px solid #444; border-radius: 8px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.2s;}
-      #btn-submit-github:hover { background: #2ea043; border-color: #2ea043;}
-    `;
-    this.appendChild(style);
-
-    const tabs = this.querySelectorAll('.debug-tab');
-    const views = this.querySelectorAll('.debug-view');
-    tabs.forEach(tab => {
-        tab.addEventListener('click', (e) => {
-            tabs.forEach(t => t.classList.remove('active'));
-            const target = e.currentTarget.getAttribute('data-target');
-            e.currentTarget.classList.add('active');
-            this.activeTab = target;
-            
-            views.forEach(v => v.style.display = 'none');
-            this.querySelector(`#view-${target}`).style.display = 'block';
-            this.renderBody();
-        });
-    });
-
-    this.querySelector('#debug-search').addEventListener('input', (e) => {
-      this.filterText = e.target.value.toLowerCase();
-      this.renderBody();
-    });
-
-    this.querySelector('.debug-body').addEventListener('input', (e) => {
-        if (e.target.classList.contains('log-name-input')) {
-            const code = e.target.getAttribute('data-code');
-            const newName = e.target.value;
-            if (newName.trim() === '') delete this._aliases[code];
-            else this._aliases[code] = newName;
-            localStorage.setItem('vf_debug_aliases', JSON.stringify(this._aliases));
-        }
-    });
-
-    this.querySelector('.debug-body').addEventListener('click', (e) => {
-        const btnSubmit = e.target.closest('#btn-submit-github');
-        if (btnSubmit) {
-            let markdown = `### Báo cáo Giải mã Lệnh / Cảm biến mới\n\n`;
-            markdown += `Tôi phát hiện một số mã lệnh mới từ thẻ Debug Card:\n\n`;
-            markdown += `| Device Key | Giá trị RAW | Đề xuất Tên (Name) | Đề xuất Trạng thái |\n`;
-            markdown += `| :--- | :--- | :--- | :--- |\n`;
-            
-            let issueCount = 0;
-            const rows = this.querySelectorAll('.report-row');
-            rows.forEach(row => {
-                let k = row.getAttribute('data-key');
-                let rv = row.getAttribute('data-raw');
-                let name = row.querySelector('.rep-name').value.trim();
-                let state = row.querySelector('.rep-state').value.trim();
-                
-                if (name !== "" || state !== "") {
-                    markdown += `| \`${k}\` | \`${rv}\` | **${name || "_Chưa rõ_"}** | ${state || "_Chưa rõ_"} |\n`;
-                    issueCount++;
-                }
-            });
-
-            if (issueCount === 0) {
-                alert("Hãy nhập Đề xuất Tên hoặc Trạng thái vào ít nhất 1 ô trống trước khi gửi báo cáo!");
-                return;
-            }
-
-            markdown += `\n<details>\n<summary><b>JSON RAW Đính kèm (Dành cho Dev)</b></summary>\n\n`;
-            markdown += `\`\`\`json\n${JSON.stringify(this._rawJsonData, null, 2)}\n\`\`\`\n`;
-            markdown += `\n</details>\n`;
-
-            let issueTitle = "Bổ sung mã lệnh cảm biến mới (từ Cộng đồng)";
-            let githubBaseUrl = "https://github.com/thangnd85/vinfast-connected-car/issues/new";
-            let encodedBody = encodeURIComponent(markdown);
-            let finalUrl = githubBaseUrl;
-            
-            if (encodedBody.length < 4000) {
-                finalUrl = `${githubBaseUrl}?title=${encodeURIComponent(issueTitle)}&body=${encodedBody}`;
-            }
-
-            let newTab = window.open(finalUrl, "_blank");
-
-            navigator.clipboard.writeText(markdown).then(() => {
-                btnSubmit.style.background = "#2ea043";
-                btnSubmit.innerHTML = `<ha-icon icon="mdi:check-circle"></ha-icon> ĐÃ COPY & ĐÃ MỞ TAB GITHUB!`;
-
-                if (!newTab || newTab.closed || typeof newTab.closed == 'undefined') {
-                    alert("Trình duyệt hoặc App Home Assistant đã chặn mở cửa sổ mới! \nDữ liệu đã được lưu vào bộ nhớ tạm. Hãy tự mở link Github và dán báo cáo nhé.");
-                }
-
-                setTimeout(() => {
-                    btnSubmit.style.background = "#24292e";
-                    btnSubmit.innerHTML = `BƯỚC 1: COPY MÃ <ha-icon icon="mdi:arrow-right"></ha-icon> BƯỚC 2: MỞ ISSUE TRÊN GITHUB`;
-                }, 3000);
-            }).catch(err => {
-                alert("Lỗi khi copy vào bộ nhớ tạm: " + err);
-            });
-        }
-    });
-  }
-
-  renderBody() {
-    const headerTitle = this.querySelector('#debug-status-text');
-    if (headerTitle) {
-        let totalCodes = Object.keys(this._rawJsonData).length;
-        if (totalCodes > 0) headerTitle.innerText = `Phát hiện ${totalCodes} mã Active`;
-    }
-
-    if (this.activeTab === 'log') {
-        const viewLog = this.querySelector('#view-log');
-        if (this._logData.length === 0) {
-            viewLog.innerHTML = `<div style="color:#64748b; text-align:center; margin-top:20px;">[ Bật thiết bị trên xe để bắt mã... ]</div>`;
-            return;
-        }
-
-        let html = '';
-        this._logData.forEach((item) => {
-            const alias = this._aliases[item.code] || (this._dictionary[item.code] ? this._dictionary[item.code].name : "");
-            
-            if (this.filterText) {
-                const searchStr = `${item.time} ${item.code} ${item.old_value} ${item.new_value} ${alias}`.toLowerCase();
-                if (!searchStr.includes(this.filterText)) return;
-            }
-
-            html += `
-                <div class="log-item">
-                    <div class="log-left">
-                        <span class="log-time">🕒 ${item.time} • <span class="log-code">${item.code}</span></span>
-                        <input type="text" class="log-name-input" data-code="${item.code}" value="${this._aliases[item.code] || ''}" placeholder="${alias || '✍️ Đặt tên tùy chỉnh (Lưu Local)...'}">
-                    </div>
-                    <div class="log-right">
-                        <div class="log-val-box">
-                            <span class="log-val-old">${item.old_value}</span> 
-                            <span class="log-arrow">➔</span> 
-                            <span class="log-val-new">${item.new_value}</span>
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-        viewLog.innerHTML = html || `<div style="color:#64748b; text-align:center; margin-top:20px;">[ Không tìm thấy ]</div>`;
-    }
-
-    if (this.activeTab === 'raw') {
-        const viewRaw = this.querySelector('#view-raw');
-        let displayJson = {};
-        for (let [key, value] of Object.entries(this._rawJsonData)) {
-            let dictName = this._dictionary[key] ? this._dictionary[key].name : "";
-            let alias = this._aliases[key] || dictName;
-            
-            if (this.filterText && !key.toLowerCase().includes(this.filterText) && !String(value).toLowerCase().includes(this.filterText) && !alias.toLowerCase().includes(this.filterText)) {
-                continue;
-            }
-            if (alias) displayJson[`${key} (${alias})`] = value;
-            else displayJson[key] = value;
-        }
-        viewRaw.textContent = JSON.stringify(displayJson, null, 2);
-    }
-
-    if (this.activeTab === 'report') {
-        const viewReport = this.querySelector('#view-report');
-        let html = `
-            <div class="guide-box">
-                <div style="font-weight: bold; margin-bottom: 8px; color: #10b981; font-size: 14px;">
-                    <ha-icon icon="mdi:bullhorn-outline" style="width: 18px; height: 18px; margin-bottom: 2px;"></ha-icon> HƯỚNG DẪN CỘNG ĐỒNG:
-                </div>
-                <div style="margin-bottom: 5px;"><span class="guide-step">BƯỚC 1:</span> Gõ dự đoán của bạn vào các ô trống (ưu tiên các mã <span style="color:#f59e0b; font-weight:bold;">Màu Cam</span> - chưa được giải mã).</div>
-                <div style="margin-bottom: 5px;"><span class="guide-step">BƯỚC 2:</span> Bấm nút <b style="color:white;">COPY & MỞ GITHUB</b> ở cuối bảng.</div>
-                <div><span class="guide-step">BƯỚC 3:</span> Trình duyệt sẽ mở tab Github Issue mới. Nếu chưa thấy nội dung được điền sẵn, hãy bấm <b style="color:#38bdf8;">Ctrl + V (Dán)</b> vào khung soạn thảo và bấm Submit!</div>
-            </div>
-            
-            <table class="report-table">
-                <thead>
-                    <tr>
-                        <th style="width: 20%">Mã Lệnh</th>
-                        <th style="width: 25%">RAW</th>
-                        <th style="width: 28%">Tên Đề xuất</th>
-                        <th style="width: 27%">Trạng thái</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-
-        for (let [key, val] of Object.entries(this._rawJsonData)) {
-            let dictObj = this._dictionary[key];
-            let dictName = dictObj ? dictObj.name : "";
-            let dictState = dictObj ? dictObj.parse(val) : "";
-            
-            let aliasName = this._aliases[key] || "";
-            let displayName = aliasName || dictName;
-            let isUnknown = !dictObj ? 'unknown' : '';
-
-            if (this.filterText && !key.toLowerCase().includes(this.filterText) && !String(val).toLowerCase().includes(this.filterText) && !displayName.toLowerCase().includes(this.filterText)) {
-                continue;
-            }
-
-            let displayVal = typeof val === 'object' ? JSON.stringify(val) : val;
-
-            html += `
-                <tr class="report-row ${isUnknown}" data-key="${key}" data-raw='${displayVal}'>
-                    <td style="color: #f43f5e; font-weight: bold;">${key}</td>
-                    <td style="font-weight: bold; color: #e2e8f0;">${displayVal}</td>
-                    <td><input type="text" class="rep-input rep-name" value="${displayName}" placeholder="Vd: Sưởi ghế..."></td>
-                    <td><input type="text" class="rep-input rep-state" value="${dictState}" placeholder="Vd: Bật"></td>
-                </tr>
-            `;
-        }
-
-        html += `
-                </tbody>
-            </table>
-            <button id="btn-submit-github">
-                BƯỚC 1: COPY MÃ <ha-icon icon="mdi:arrow-right" style="margin:0 5px;"></ha-icon> BƯỚC 2: MỞ ISSUE TRÊN GITHUB
-            </button>
-        `;
-        viewReport.innerHTML = html;
-    }
-  }
-
-  getCardSize() { return 8; }
-}
-
-if (!customElements.get('vinfast-debug-card')) {
-    customElements.define('vinfast-debug-card', VinFastDebugCard);
-}
