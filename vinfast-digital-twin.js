@@ -40,7 +40,10 @@ class VinFastDigitalTwin extends HTMLElement {
     this._selectedDateStr = 'LIVE'; 
     this._addressCache = {};
     
-    // Biến cho thống kê năng lượng
+    // Biến cho thống kê năng lượng từ sensor
+    this._lastTotalEnergy = parseFloat(localStorage.getItem('vf_last_total_energy')) || 0;
+    this._lastTotalDistance = parseFloat(localStorage.getItem('vf_last_total_distance')) || 0;
+    this._monthlyEnergyData = JSON.parse(localStorage.getItem('vf_monthly_energy') || '{}');
     this._energyStats = {};
     this._currentYear = new Date().getFullYear();
     this._energyChart = null;
@@ -115,7 +118,6 @@ class VinFastDigitalTwin extends HTMLElement {
               this._chargeHistoryData = await res.json();
               const box = this.querySelector('#box-charge');
               if (box && box.classList.contains('active-box')) this.renderChargeHistory();
-              this.loadEnergyStats(this._currentYear);
           }
       } catch(e) {}
   }
@@ -206,7 +208,7 @@ class VinFastDigitalTwin extends HTMLElement {
     
     this.renderCalendar();
     this.switchMode();
-    this.loadEnergyStats(this._currentYear);
+    this.loadEnergyStatsFromSensors();
   }
 
   cleanRouteData(points) {
@@ -743,196 +745,104 @@ class VinFastDigitalTwin extends HTMLElement {
   }
 
   // ===============================================
-  // THỐNG KÊ ĐIỆN NĂNG THEO THÁNG (BIỂU ĐỒ)
+  // LẤY DỮ LIỆU ĐIỆN NĂNG & CO2 TỪ SENSOR HA
   // ===============================================
-  async loadEnergyStats(year) {
-      if (!this._entityPrefix) return;
-      
+  loadEnergyStatsFromSensors() {
       const p = this._entityPrefix;
-      const monthlyData = {};
-      for (let i = 1; i <= 12; i++) {
-          monthlyData[i] = {
-              energy: 0,
-              distance: 0,
-              cost: 0,
-              trips: 0
+      if (!p || !this._hass) return;
+      
+      const getValidState = (suffix) => {
+          const s = this._hass?.states[`sensor.${p}_${suffix}`];
+          if (!s) return null;
+          const val = s.state;
+          return (val !== 'unavailable' && val !== 'unknown' && val !== '' && val !== '--') ? parseFloat(val) : null;
+      };
+      
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
+      const monthKey = `${currentYear}-${currentMonth}`;
+      
+      // Lấy tổng điện năng vòng đời
+      const totalEnergy = getValidState('tong_dien_nang_da_sac') || 0;
+      const totalDistance = getValidState('tong_quang_duong_da_di') || 0;
+      
+      // Lấy số lần sạc
+      const homeSessions = getValidState('so_lan_sac_tai_nha') || 0;
+      const pubSessions = getValidState('so_lan_sac_tai_tram') || 0;
+      
+      // Tính điện năng tháng hiện tại
+      let currentMonthEnergy = 0;
+      let currentMonthDistance = 0;
+      
+      if (this._monthlyEnergyData[monthKey]) {
+          currentMonthEnergy = this._monthlyEnergyData[monthKey].energy;
+          currentMonthDistance = this._monthlyEnergyData[monthKey].distance;
+      } else if (this._lastTotalEnergy > 0 && totalEnergy > this._lastTotalEnergy) {
+          currentMonthEnergy = totalEnergy - this._lastTotalEnergy;
+          currentMonthDistance = totalDistance - this._lastTotalDistance;
+          
+          this._monthlyEnergyData[monthKey] = {
+              energy: currentMonthEnergy,
+              distance: currentMonthDistance,
+              homeSessions: homeSessions,
+              pubSessions: pubSessions,
+              timestamp: Date.now()
           };
+          localStorage.setItem('vf_monthly_energy', JSON.stringify(this._monthlyEnergyData));
       }
       
-      // Đọc dữ liệu từ charge history
-      if (this._chargeHistoryData && this._chargeHistoryData.length > 0) {
-          this._chargeHistoryData.forEach(charge => {
-              if (!charge.date) return;
-              
-              let parts = charge.date.split(/[/-]/);
-              let chargeYear = null, chargeMonth = null;
-              
-              if (parts.length === 3) {
-                  if (parts[0].length === 4) {
-                      chargeYear = parseInt(parts[0]);
-                      chargeMonth = parseInt(parts[1]);
-                  } else {
-                      chargeYear = parseInt(parts[2]);
-                      chargeMonth = parseInt(parts[1]);
-                  }
-              }
-              
-              if (chargeYear === year && chargeMonth >= 1 && chargeMonth <= 12) {
-                  let kwh = parseFloat(charge.kwh) || 0;
-                  monthlyData[chargeMonth].energy += kwh;
-                  monthlyData[chargeMonth].cost += kwh * 3000;
-                  monthlyData[chargeMonth].trips++;
-              }
-          });
+      // Tính CO2 tiết kiệm (1 kWh = 0.5 kg CO2 so với xe xăng)
+      const co2Saved = currentMonthEnergy * 0.5;
+      
+      // Tính chi phí
+      const costThisMonth = currentMonthEnergy * 3000;
+      
+      // ===============================================
+      // CẬP NHẬT HIỂN THỊ
+      // ===============================================
+      
+      // Ô 1: Điện năng tháng
+      const energyMonthEl = this.querySelector('#vf-stat-energy-month');
+      if (energyMonthEl) {
+          energyMonthEl.innerHTML = `${currentMonthEnergy.toFixed(1)}<span class="stat-unit">kWh</span>`;
       }
       
-      // Đọc dữ liệu từ trip history
-      for (let dateStr in this._tripsData) {
-          if (this._tripsData.hasOwnProperty(dateStr)) {
-              let [tripYear, tripMonth, tripDay] = dateStr.split('-');
-              if (parseInt(tripYear) === year) {
-                  const month = parseInt(tripMonth);
-                  const trips = this._tripsData[dateStr];
-                  let monthDistance = 0;
-                  
-                  trips.forEach(trip => {
-                      monthDistance += trip.distance || 0;
-                  });
-                  
-                  monthlyData[month].distance += monthDistance;
-              }
-          }
+      // Ô 2: CO2 tiết kiệm
+      const co2El = this.querySelector('#vf-stat-co2');
+      if (co2El) {
+          co2El.innerHTML = `${co2Saved.toFixed(0)}<span class="stat-unit">kg</span>`;
       }
       
-      this._energyStats[year] = monthlyData;
-      this.renderEnergyChart(year);
-      this.renderEnergyTable(year);
+      // Ô 3: Số lần sạc trong tháng
+      const chargeCountEl = this.querySelector('#vf-stat-charge-month');
+      if (chargeCountEl) {
+          const totalSessions = (homeSessions + pubSessions);
+          chargeCountEl.innerHTML = `${totalSessions}<span class="stat-unit">lần</span>`;
+          
+          // Thêm tooltip chi tiết
+          chargeCountEl.setAttribute('title', `🏠 Nhà: ${homeSessions} lần | 🔌 Trạm: ${pubSessions} lần`);
+      }
+      
+      // Ô 4: Chi phí tháng
+      const costEl = this.querySelector('#vf-stat-cost-month');
+      if (costEl) {
+          costEl.innerHTML = `${costThisMonth.toLocaleString()}<span class="stat-unit">đ</span>`;
+      }
+      
+      // Lưu lại để tháng sau so sánh
+      this._lastTotalEnergy = totalEnergy;
+      this._lastTotalDistance = totalDistance;
+      localStorage.setItem('vf_last_total_energy', totalEnergy);
+      localStorage.setItem('vf_last_total_distance', totalDistance);
+      
+      // Cập nhật biểu đồ nếu có
+      this.updateEnergyChart(currentYear);
   }
-
-  renderEnergyChart(year) {
-      const canvas = this.querySelector('#energy-chart');
-      if (!canvas) return;
-      
-      const data = this._energyStats[year] || {};
-      const monthNames = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12'];
-      const energyData = [];
-      let maxEnergy = 0;
-      
-      for (let i = 1; i <= 12; i++) {
-          let val = data[i]?.energy || 0;
-          energyData.push(val);
-          if (val > maxEnergy) maxEnergy = val;
-      }
-      
-      // Xóa biểu đồ cũ nếu có
-      if (this._energyChart) {
-          this._energyChart.destroy();
-      }
-      
-      // Lấy context và vẽ biểu đồ mới
-      const ctx = canvas.getContext('2d');
-      const width = canvas.clientWidth;
-      const height = canvas.clientHeight;
-      canvas.width = width;
-      canvas.height = height;
-      
-      const barWidth = (width - 60) / 12 - 4;
-      const maxBarHeight = height - 50;
-      
-      ctx.clearRect(0, 0, width, height);
-      
-      // Vẽ trục
-      ctx.beginPath();
-      ctx.strokeStyle = '#64748b';
-      ctx.fillStyle = '#64748b';
-      ctx.font = '10px sans-serif';
-      
-      // Trục Y
-      ctx.moveTo(40, 10);
-      ctx.lineTo(40, height - 30);
-      ctx.lineTo(width - 10, height - 30);
-      ctx.stroke();
-      
-      // Vẽ cột
-      for (let i = 0; i < 12; i++) {
-          const x = 45 + i * (barWidth + 8);
-          const barHeight = maxEnergy > 0 ? (energyData[i] / maxEnergy) * maxBarHeight : 0;
-          const y = height - 30 - barHeight;
-          
-          // Vẽ cột
-          ctx.fillStyle = energyData[i] > 0 ? '#3b82f6' : '#cbd5e1';
-          ctx.fillRect(x, y, barWidth, barHeight);
-          
-          // Vẽ tên tháng
-          ctx.fillStyle = '#475569';
-          ctx.fillText(monthNames[i], x + 2, height - 18);
-          
-          // Vẽ giá trị
-          if (energyData[i] > 0) {
-              ctx.fillStyle = '#1e293b';
-              ctx.fillText(energyData[i], x + 2, y - 2);
-          }
-      }
-      
-      // Vẽ giá trị max trên trục Y
-      if (maxEnergy > 0) {
-          ctx.fillStyle = '#64748b';
-          ctx.fillText(maxEnergy, 10, 15);
-          ctx.fillText(Math.round(maxEnergy / 2), 10, maxBarHeight / 2 + 15);
-          ctx.fillText(0, 10, height - 25);
-      }
-      
-      // Cập nhật tổng kết
-      this.updateEnergySummary(year);
-  }
-
-  renderEnergyTable(year) {
-      const tbody = this.querySelector('#energy-stats-table-body');
-      if (!tbody) return;
-      
-      const data = this._energyStats[year] || {};
-      const monthNames = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
-      
-      let html = '';
-      for (let i = 1; i <= 12; i++) {
-          const monthData = data[i] || { energy: 0, distance: 0, cost: 0 };
-          const efficiency = monthData.distance > 0 ? ((monthData.energy / monthData.distance) * 100).toFixed(1) : '--';
-          
-          html += `
-              <tr>
-                  <td style="padding: 8px; text-align: left; font-weight: 500;">${monthNames[i-1]}</td>
-                  <td style="padding: 8px; text-align: right;">${monthData.energy.toFixed(1)} kWh</td>
-                  <td style="padding: 8px; text-align: right;">${monthData.distance.toFixed(1)} km</td>
-                  <td style="padding: 8px; text-align: right;">${efficiency !== '--' ? efficiency : '--'} kWh/100km</td>
-                  <td style="padding: 8px; text-align: right;">${monthData.cost.toLocaleString()} VNĐ</td>
-              </tr>
-          `;
-      }
-      
-      tbody.innerHTML = html;
-  }
-
-  updateEnergySummary(year) {
-      const data = this._energyStats[year] || {};
-      let totalEnergy = 0, totalDistance = 0, totalCost = 0;
-      
-      for (let i = 1; i <= 12; i++) {
-          totalEnergy += data[i]?.energy || 0;
-          totalDistance += data[i]?.distance || 0;
-          totalCost += data[i]?.cost || 0;
-      }
-      
-      const avgEfficiency = totalDistance > 0 ? ((totalEnergy / totalDistance) * 100).toFixed(1) : '--';
-      
-      const totalEnergyEl = this.querySelector('#total-energy-year');
-      const totalDistanceEl = this.querySelector('#total-distance-year');
-      const totalCostEl = this.querySelector('#total-cost-year');
-      const avgEfficiencyEl = this.querySelector('#avg-efficiency-year');
-      
-      if (totalEnergyEl) totalEnergyEl.innerText = totalEnergy.toFixed(1);
-      if (totalDistanceEl) totalDistanceEl.innerText = totalDistance.toFixed(1);
-      if (totalCostEl) totalCostEl.innerText = totalCost.toLocaleString();
-      if (avgEfficiencyEl) avgEfficiencyEl.innerText = avgEfficiency !== '--' ? `${avgEfficiency} kWh/100km` : '--';
+  
+  updateEnergyChart(year) {
+      // Hàm này có thể để trống hoặc vẽ biểu đồ đơn giản
+      // Nếu muốn có biểu đồ, bạn có thể thêm Chart.js
   }
 
   initMap() {
@@ -1126,65 +1036,67 @@ class VinFastDigitalTwin extends HTMLElement {
                 </div>
               </div>
               
-              <!-- THỐNG KÊ ĐIỆN NĂNG THEO THÁNG -->
-              <div class="stat-box clickable" id="box-energy-stats">
+              <!-- 4 Ô THỐNG KÊ NĂNG LƯỢNG & CO2 -->
+              <div class="stat-box clickable" id="box-energy-month">
                 <div class="box-main">
-                  <ha-icon icon="mdi:chart-line" style="color: #8b5cf6;"></ha-icon>
+                  <ha-icon icon="mdi:lightning-bolt" style="color: #f59e0b;"></ha-icon>
                   <div class="stat-info">
-                    <div class="stat-label">ĐIỆN NĂNG</div>
-                    <div class="stat-val" id="vf-stat-energy-month">--</div>
+                    <div class="stat-label">ĐIỆN NĂNG THÁNG</div>
+                    <div class="stat-val" id="vf-stat-energy-month">-- kWh</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="stat-box clickable" id="box-co2-saved">
+                <div class="box-main">
+                  <ha-icon icon="mdi:leaf" style="color: #10b981;"></ha-icon>
+                  <div class="stat-info">
+                    <div class="stat-label">TIẾT KIỆM CO₂</div>
+                    <div class="stat-val" id="vf-stat-co2">-- kg</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="stat-box clickable" id="box-charge-count-month">
+                <div class="box-main">
+                  <ha-icon icon="mdi:ev-station" style="color: #8b5cf6;"></ha-icon>
+                  <div class="stat-info">
+                    <div class="stat-label">SỐ LẦN SẠC</div>
+                    <div class="stat-val" id="vf-stat-charge-month">--</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="stat-box clickable" id="box-cost-month">
+                <div class="box-main">
+                  <ha-icon icon="mdi:currency-usd" style="color: #ef4444;"></ha-icon>
+                  <div class="stat-info">
+                    <div class="stat-label">CHI PHÍ THÁNG</div>
+                    <div class="stat-val" id="vf-stat-cost-month">-- VNĐ</div>
                   </div>
                 </div>
               </div>
               
               <div class="stat-detail-container" id="detail-container-4">
                 <div class="stat-detail-content" id="detail-energy-stats" style="padding: 15px;">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
-                    <div style="font-weight: bold; color: var(--primary-text-color);">
-                      <ha-icon icon="mdi:calendar-month" style="--mdc-icon-size: 18px; margin-right: 6px;"></ha-icon>
-                      Thống kê điện năng theo tháng
+                  <div style="font-weight: bold; margin-bottom: 10px; color: var(--primary-text-color);">
+                    <ha-icon icon="mdi:chart-line" style="--mdc-icon-size: 18px; margin-right: 6px;"></ha-icon>
+                    Thống kê năng lượng & CO₂
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
+                    <div style="background: var(--secondary-background-color); border-radius: 12px; padding: 12px; text-align: center;">
+                      <div style="font-size: 11px; color: var(--secondary-text-color);">Điện năng tháng này</div>
+                      <div style="font-size: 24px; font-weight: bold; color: #f59e0b;" id="detail-energy-value">-- kWh</div>
+                      <div style="font-size: 10px; color: var(--secondary-text-color);">tương đương <span id="detail-energy-eq">--</span> km</div>
                     </div>
-                    <div style="display: flex; gap: 8px;">
-                      <select id="energy-year-selector" style="background: var(--secondary-background-color); border: 1px solid var(--divider-color); border-radius: 6px; padding: 4px 8px; font-size: 12px;">
-                        <option value="2024">2024</option>
-                        <option value="2025">2025</option>
-                        <option value="2026">2026</option>
-                      </select>
-                      <button id="refresh-energy-stats" style="background: #2563eb; color: white; border: none; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px;">
-                        <ha-icon icon="mdi:refresh" style="--mdc-icon-size: 14px;"></ha-icon>
-                        Cập nhật
-                      </button>
+                    <div style="background: var(--secondary-background-color); border-radius: 12px; padding: 12px; text-align: center;">
+                      <div style="font-size: 11px; color: var(--secondary-text-color);">CO₂ tiết kiệm</div>
+                      <div style="font-size: 24px; font-weight: bold; color: #10b981;" id="detail-co2-value">-- kg</div>
+                      <div style="font-size: 10px; color: var(--secondary-text-color);">🌳 tương đương <span id="detail-co2-trees">--</span> cây xanh</div>
                     </div>
                   </div>
-                  
-                  <!-- Biểu đồ cột -->
-                  <canvas id="energy-chart" style="width: 100%; height: 250px; margin-bottom: 15px; background: var(--card-background-color); border-radius: 12px;"></canvas>
-                  
-                  <!-- Bảng thống kê chi tiết -->
-                  <div style="overflow-x: auto;">
-                    <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
-                      <thead>
-                        <tr style="background: var(--secondary-background-color);">
-                          <th style="padding: 8px; text-align: left;">Tháng</th>
-                          <th style="padding: 8px; text-align: right;">Điện năng (kWh)</th>
-                          <th style="padding: 8px; text-align: right;">Quãng đường (km)</th>
-                          <th style="padding: 8px; text-align: right;">Hiệu suất (kWh/100km)</th>
-                          <th style="padding: 8px; text-align: right;">Chi phí (VNĐ)</th>
-                        </tr>
-                      </thead>
-                      <tbody id="energy-stats-table-body">
-                        <tr><td colspan="5" style="text-align: center;">Đang tải dữ liệu...</td></tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  
-                  <div style="margin-top: 15px; padding: 10px; background: var(--secondary-background-color); border-radius: 8px; font-size: 11px; color: var(--secondary-text-color);">
-                    <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-                      <div><span>📊 Tổng điện năng: </span><b id="total-energy-year" style="color: #2563eb;">--</b> kWh</div>
-                      <div><span>📈 Tổng quãng đường: </span><b id="total-distance-year" style="color: #10b981;">--</b> km</div>
-                      <div><span>💰 Tổng chi phí: </span><b id="total-cost-year" style="color: #f59e0b;">--</b> VNĐ</div>
-                      <div><span>⚡ Hiệu suất TB: </span><b id="avg-efficiency-year" style="color: #8b5cf6;">--</b> kWh/100km</div>
-                    </div>
+                  <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--divider-color); font-size: 11px; color: var(--secondary-text-color); text-align: center;">
+                    💡 1 kWh = 0.5 kg CO₂ so với xe xăng | Giá điện 3.000đ/kWh
                   </div>
                 </div>
               </div>
@@ -1441,20 +1353,6 @@ class VinFastDigitalTwin extends HTMLElement {
         .marker-pause { background: #f59e0b; border: 2px solid white; border-radius: 50%; color: white; display: flex; justify-content: center; align-items: center; font-size: 10px; font-weight: bold; width: 18px !important; height: 18px !important; margin-top:-9px; margin-left:-9px; box-shadow: 0 3px 6px rgba(0,0,0,0.3);}
         .marker-end-flag { font-size: 20px; line-height: 1; filter: drop-shadow(0 3px 3px rgba(0,0,0,0.3)); margin-top:-20px; margin-left:-10px;}
         .marker-continue { background: #3b82f6; border: 2px solid white; border-radius: 50%; color: white; display: flex; justify-content: center; align-items: center; font-size: 10px; font-weight: bold; width: 18px !important; height: 18px !important; margin-top:-9px; margin-left:-9px; box-shadow: 0 3px 6px rgba(0,0,0,0.3);}
-        
-        /* Style cho biểu đồ và bảng thống kê */
-        #energy-chart {
-          background: var(--card-background-color, white);
-          border-radius: 12px;
-          padding: 10px;
-        }
-        #energy-stats-table-body tr:hover {
-          background: var(--secondary-background-color, #f3f4f6);
-        }
-        #energy-stats-table-body td {
-          padding: 6px 8px;
-          border-bottom: 1px solid var(--divider-color, #e5e7eb);
-        }
       `;
       this.appendChild(style);
 
@@ -1496,8 +1394,22 @@ class VinFastDigitalTwin extends HTMLElement {
               container.style.display = 'block'; 
               detail.style.display = 'block';
               if (boxId === '#box-charge') this.renderChargeHistory();
-              if (boxId === '#box-energy-stats') {
-                  this.loadEnergyStats(this._currentYear);
+              if (boxId === '#box-energy-month' || boxId === '#box-co2-saved' || boxId === '#box-charge-count-month' || boxId === '#box-cost-month') {
+                  // Cập nhật chi tiết khi mở
+                  const energy = this.querySelector('#vf-stat-energy-month')?.innerText || '0 kWh';
+                  const co2 = this.querySelector('#vf-stat-co2')?.innerText || '0 kg';
+                  const energyValue = parseFloat(energy) || 0;
+                  const co2Value = parseFloat(co2) || 0;
+                  
+                  const detailEnergy = this.querySelector('#detail-energy-value');
+                  const detailCo2 = this.querySelector('#detail-co2-value');
+                  const detailEnergyEq = this.querySelector('#detail-energy-eq');
+                  const detailCo2Trees = this.querySelector('#detail-co2-trees');
+                  
+                  if (detailEnergy) detailEnergy.innerText = energyValue.toFixed(1);
+                  if (detailCo2) detailCo2.innerText = co2Value.toFixed(0);
+                  if (detailEnergyEq) detailEnergyEq.innerText = (energyValue * 5).toFixed(0);
+                  if (detailCo2Trees) detailCo2Trees.innerText = Math.round(co2Value / 10);
               }
           }
       };
@@ -1565,7 +1477,10 @@ class VinFastDigitalTwin extends HTMLElement {
       attachClick('#box-speed', '#detail-speed', '#detail-container-2'); 
       attachClick('#box-trip', '#detail-trip', '#detail-container-3');
       attachClick('#box-charge', '#detail-charge', '#detail-container-3');
-      attachClick('#box-energy-stats', '#detail-energy-stats', '#detail-container-4');
+      attachClick('#box-energy-month', '#detail-energy-stats', '#detail-container-4');
+      attachClick('#box-co2-saved', '#detail-energy-stats', '#detail-container-4');
+      attachClick('#box-charge-count-month', '#detail-energy-stats', '#detail-container-4');
+      attachClick('#box-cost-month', '#detail-energy-stats', '#detail-container-4');
 
       const btnLocate = this.querySelector('#btn-locate');
       if (btnLocate) btnLocate.onclick = () => { 
@@ -1617,24 +1532,6 @@ class VinFastDigitalTwin extends HTMLElement {
               localStorage.setItem('vf_station_filter', this._stationFilter);
               this.renderStations();
           };
-      }
-
-      // Xử lý chọn năm và refresh thống kê năng lượng
-      const yearSelector = this.querySelector('#energy-year-selector');
-      const refreshBtn = this.querySelector('#refresh-energy-stats');
-      
-      if (yearSelector) {
-          yearSelector.value = this._currentYear;
-          yearSelector.addEventListener('change', (e) => {
-              this._currentYear = parseInt(e.target.value);
-              this.loadEnergyStats(this._currentYear);
-          });
-      }
-      
-      if (refreshBtn) {
-          refreshBtn.addEventListener('click', () => {
-              this.loadEnergyStats(this._currentYear);
-          });
       }
 
       const callServiceBtn = (btnId, domain, service, entityId) => {
@@ -1951,7 +1848,7 @@ class VinFastDigitalTwin extends HTMLElement {
     const dtSohEl = this.querySelector('#dt-soh'); if (dtSohEl) dtSohEl.innerText = getValidState('suc_khoe_pin_soh_tinh_toan') ? `${getValidState('suc_khoe_pin_soh_tinh_toan')}%` : '--';
     const dtChargeEffEl = this.querySelector('#dt-charge-eff'); if (dtChargeEffEl) dtChargeEffEl.innerText = getValidState('hieu_suat_sac_thuc_te_lan_cuoi') ? `${getValidState('hieu_suat_sac_thuc_te_lan_cuoi')}%` : '--';
     
-    // CẮM SẠC LÚC & RÚT SẠC LÚC - HIỂN THỊ CHI TIẾT THỜI GIAN
+    // CẮM SẠC LÚC & RÚT SẠC LÚC
     const dtChargeSocStartEl = this.querySelector('#dt-charge-soc-start');
     const dtChargeStartTimeEl = this.querySelector('#dt-charge-start-time-value');
     const dtChargeSocEndEl = this.querySelector('#dt-charge-soc-end');
@@ -2054,15 +1951,8 @@ class VinFastDigitalTwin extends HTMLElement {
         else addressEl.innerText = "Đang tìm vị trí...";
     }
 
-    // Cập nhật giá trị hiển thị cho thẻ ĐIỆN NĂNG (hiển thị tổng điện năng năm hiện tại)
-    const energyMonthEl = this.querySelector('#vf-stat-energy-month');
-    if (energyMonthEl && this._energyStats[this._currentYear]) {
-        let totalEnergy = 0;
-        for (let i = 1; i <= 12; i++) {
-            totalEnergy += this._energyStats[this._currentYear][i]?.energy || 0;
-        }
-        energyMonthEl.innerHTML = `${totalEnergy.toFixed(0)}<span class="stat-unit">kWh</span>`;
-    }
+    // Cập nhật dữ liệu từ sensor HA cho 4 ô thống kê
+    this.loadEnergyStatsFromSensors();
 
     if (batt && !isNaN(batt)) {
         const battNum = parseFloat(batt); 
