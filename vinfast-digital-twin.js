@@ -882,7 +882,12 @@ class VinFastDigitalTwin extends HTMLElement {
     // Ô ĐIỆN NĂNG TỔNG
     const totalEnergyEl = this.querySelector('#vf-stat-total-energy');
     if (totalEnergyEl) {
-      totalEnergyEl.innerHTML = `${totalEnergy.toFixed(1)}<span class="stat-unit">kWh</span>`;
+      {
+     // Lấy giá trị từ sensor thực tế
+     const sensorValue = this._hass?.states['sensor.xe_sl_hang_ngay_chuan']?.state;
+     const value = (sensorValue && sensorValue !== 'unavailable') ? parseFloat(sensorValue) : 0;
+     totalEnergyEl.innerHTML = `${value.toFixed(1)}<span class="stat-unit">kWh</span>`;
+
     }
     
     // Ô CO₂ TỔNG
@@ -1120,7 +1125,7 @@ class VinFastDigitalTwin extends HTMLElement {
                   <ha-icon icon="mdi:lightning-bolt-circle" style="color: #3b82f6;"></ha-icon>
                   <div class="stat-info">
                     <div class="stat-label">ĐIỆN NĂNG NGÀY</div>
-                    <div class="stat-val" id="sensor.xe_sl_hang_ngay_chuan">-- kWh</div>
+                    <div class="stat-val" id="vf-stat-total-energy">-- kWh</div>
                   </div>
                 </div>
               </div>
