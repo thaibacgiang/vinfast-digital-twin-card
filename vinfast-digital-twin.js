@@ -1119,8 +1119,8 @@ class VinFastDigitalTwin extends HTMLElement {
                 <div class="box-main">
                   <ha-icon icon="mdi:lightning-bolt-circle" style="color: #3b82f6;"></ha-icon>
                   <div class="stat-info">
-                    <div class="stat-label">ĐIỆN NĂNG TỔNG</div>
-                    <div class="stat-val" id="vf-stat-total-energy">-- kWh</div>
+                    <div class="stat-label">ĐIỆN NĂNG NGÀY</div>
+                    <div class="stat-val" id="sensor.xe_sl_hang_ngay_chuan">-- kWh</div>
                   </div>
                 </div>
               </div>
