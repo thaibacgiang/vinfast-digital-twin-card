@@ -1189,34 +1189,34 @@ class VinFastDigitalTwin extends HTMLElement {
                 </div>
               </div>
               
-              <!-- Ô ĐIỆN NĂNG THÁNG (hiển thị chi tiết) -->
-              <div class="stat-box clickable" id="box-energy-month">
-                <div class="box-main" style="flex-direction: column; align-items: flex-start; height: auto; gap: 4px;">
+              <!-- Ô ĐIỆN NĂNG THÁNG -->
+              <div class="stat-box clickable" id="box-energy-month" style="height: auto; min-height: 70px;">
+                <div class="box-main" style="flex-direction: column; align-items: flex-start; gap: 4px; width: 100%;">
                   <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
-                    <ha-icon icon="mdi:lightning-bolt" style="color: #f59e0b;"></ha-icon>
-                    <div class="stat-info" style="height: auto;">
+                    <ha-icon icon="mdi:lightning-bolt" style="color: #f59e0b; flex-shrink: 0;"></ha-icon>
+                    <div class="stat-info" style="height: auto; flex: 1;">
                       <div class="stat-label">ĐIỆN NĂNG THÁNG</div>
-                      <div class="stat-val" id="vf-stat-energy-month">-- kWh</div>
+                      <div class="stat-val" id="vf-stat-energy-month" style="font-size: 16px;">-- kWh</div>
                     </div>
                   </div>
-                  <div style="font-size: 11px; color: var(--secondary-text-color); padding-left: 32px;">
+                  <div style="font-size: 10px; color: var(--secondary-text-color); width: 100%; padding-left: 32px; box-sizing: border-box;">
                     <div>📊 Quãng đường: <span id="stat-month-distance">--</span> km</div>
                     <div>⚡ Hiệu suất: <span id="stat-month-efficiency">--</span> kWh/100km</div>
                   </div>
                 </div>
               </div>
 
-              <!-- Ô TIẾT KIỆM CO₂ (hiển thị tổng) -->
-              <div class="stat-box clickable" id="box-co2-saved">
-                <div class="box-main" style="flex-direction: column; align-items: flex-start; height: auto; gap: 4px;">
+              <!-- Ô TIẾT KIỆM CO₂ -->
+              <div class="stat-box clickable" id="box-co2-saved" style="height: auto; min-height: 70px;">
+                <div class="box-main" style="flex-direction: column; align-items: flex-start; gap: 4px; width: 100%;">
                   <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
-                    <ha-icon icon="mdi:leaf" style="color: #10b981;"></ha-icon>
-                    <div class="stat-info" style="height: auto;">
+                    <ha-icon icon="mdi:leaf" style="color: #10b981; flex-shrink: 0;"></ha-icon>
+                    <div class="stat-info" style="height: auto; flex: 1;">
                       <div class="stat-label">TIẾT KIỆM CO₂</div>
-                      <div class="stat-val" id="vf-stat-co2">-- kg</div>
+                      <div class="stat-val" id="vf-stat-co2" style="font-size: 16px;">-- kg</div>
                     </div>
                   </div>
-                  <div style="font-size: 11px; color: var(--secondary-text-color); padding-left: 32px;">
+                  <div style="font-size: 10px; color: var(--secondary-text-color); width: 100%; padding-left: 32px; box-sizing: border-box;">
                     <div>🌿 Tổng cây xanh: <span id="stat-total-trees">--</span> cây</div>
                   </div>
                 </div>
