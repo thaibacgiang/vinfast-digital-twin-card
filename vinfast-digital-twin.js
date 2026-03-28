@@ -882,7 +882,7 @@ class VinFastDigitalTwin extends HTMLElement {
     // Ô ĐIỆN NĂNG TỔNG
     const totalEnergyEl = this.querySelector('#vf-stat-total-energy');
     if (totalEnergyEl) {
-      {
+    
      // Lấy giá trị từ sensor thực tế
      const sensorValue = this._hass?.states['sensor.xe_sl_hang_ngay_chuan']?.state;
      const value = (sensorValue && sensorValue !== 'unavailable') ? parseFloat(sensorValue) : 0;
