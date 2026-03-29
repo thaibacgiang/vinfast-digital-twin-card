@@ -884,7 +884,7 @@ class VinFastDigitalTwin extends HTMLElement {
     if (totalEnergyEl) {
     
      // Lấy giá trị từ sensor thực tế
-     const sensorValue = this._hass?.states['sensor.xe_sl_hang_ngay_chuan']?.state;
+     const sensorValue = this._hass?.states['sensor.vf6_tieu_thu_ngay']?.state;
      const value = (sensorValue && sensorValue !== 'unavailable') ? parseFloat(sensorValue) : 0;
      totalEnergyEl.innerHTML = `${value.toFixed(1)}<span class="stat-unit">kWh</span>`;
 
