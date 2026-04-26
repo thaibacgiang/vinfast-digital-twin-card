@@ -1859,6 +1859,9 @@ class VinFastDigitalTwin extends HTMLElement {
       { slugs: ['cua_sau_phu', 'cua_sau_phai'], name: 'Cửa sau P', icon: 'mdi:car-door' },
       { slugs: ['cop_sau'], name: 'Cốp sau', icon: 'mdi:car-back' }, 
       { slugs: ['nap_capo'], name: 'Capo', icon: 'mdi:car' },
+      { slugs: ['kinh_phu', 'cua_so_phu', 'kinh_phu_phai'], name: 'Kính phụ', icon: 'mdi:window-open' },
+      { slugs: ['kinh_sau_trai', 'cua_so_sau_trai', 'kinh_sau_tai_xe'], name: 'Kính sau T', icon: 'mdi:window-open' },
+      { slugs: ['kinh_sau_phai', 'cua_so_sau_phai', 'kinh_sau_phu'], name: 'Kính sau P', icon: 'mdi:window-open' },
       { slugs: ['kinh_tai_xe', 'cua_so_tai_xe'], name: 'Kính lái', icon: 'mdi:window-open' }
     ];
 
