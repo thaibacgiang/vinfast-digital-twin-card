@@ -1787,6 +1787,10 @@ class VinFastDigitalTwin extends HTMLElement {
     const drivingState = getValidState('ten_dinh_danh_xe_mqtt'); // Lấy nội dung sensor
 
     if (nameEl) {
+        // Thêm class và style để căn sát lề trái
+      nameEl.style.textAlign = 'left';
+      nameEl.style.paddingLeft = '0';
+      nameEl.style.marginLeft = '0';
       if (weatherCondition && outsideTemp && outsideTemp !== '--') {
         nameEl.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 2px;">
