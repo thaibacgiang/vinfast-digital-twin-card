@@ -402,7 +402,7 @@ class VinFastDigitalTwin extends HTMLElement {
           iconAnchor: [pinWidth / 2, 13] 
         });
 
-        const mapDomain = 'https://www.google.com/maps/dir/?api=1&t=k';
+        const mapDomain = 'https://www.google.com/maps/dir/?api=1';
         const navUrl = `${mapDomain}&origin=${this._lastLat},${this._lastLon}&destination=${st.lat},${st.lng}&travelmode=driving`;
         
         const popupContent = `
