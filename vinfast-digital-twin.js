@@ -1018,7 +1018,7 @@ class VinFastDigitalTwin extends HTMLElement {
             <div class="vf-charging-banner" id="vf-charging-banner" style="display: none;">
               <div class="charging-left">
                 <div class="charging-title"><ha-icon icon="mdi:ev-plug-type2"></ha-icon><span id="vf-charge-status-text">Hệ thống đang sạc</span></div>
-                <div class="charging-details">Giới hạn: <span id="vf-charge-limit" style="font-weight:bold; margin-left:4px;">--%</span><span style="margin:0 8px;opacity:0.5;">|</span>Công suất: <span id="vf-charge-power" style="font-weight:bold; margin-left:4px;">-- kW</span></div>
+                <div class="charging-details">Giới hạn: <span id="vf-charge-limit" style="font-weight:bold; margin-left:4px;">--%</span><span style="margin:0 8px;opacity:0.5;">|</span>Công suất: <span id="sensor.vf6_rllvag8c9rh709847_dien_ap_tieu_thu_00004_2" style="font-weight:bold; margin-left:4px;">-- kW</span></div>
               </div>
               <div class="charging-right">
                 <span id="vf-charge-time" class="charging-time">--</span>
@@ -1913,7 +1913,7 @@ class VinFastDigitalTwin extends HTMLElement {
       const chargeLimitEl = this.querySelector('#vf-charge-limit'); 
       const chargeTimeEl = this.querySelector('#vf-charge-time'); 
       const chargeStatusTextEl = this.querySelector('#vf-charge-status-text'); 
-      const powerEl = this.querySelector('#vf-charge-power');
+      const powerEl = this.querySelector('#sensor.vf6_rllvag8c9rh709847_dien_ap_tieu_thu_00004_2');
       
       if (chargeLimitEl) chargeLimitEl.innerText = chargeLimit !== '--' ? `${chargeLimit}%` : '--';
       if (chargeTimeEl) chargeTimeEl.innerText = (chargeTimeRemain && chargeTimeRemain !== 'unknown') ? `${chargeTimeRemain}` : '--';
