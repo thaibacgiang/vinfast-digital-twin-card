@@ -1913,7 +1913,7 @@ class VinFastDigitalTwin extends HTMLElement {
       const chargeLimitEl = this.querySelector('#vf-charge-limit'); 
       const chargeTimeEl = this.querySelector('#vf-charge-time'); 
       const chargeStatusTextEl = this.querySelector('#vf-charge-status-text'); 
-      const powerEl = this.querySelector('#sensor.vf6_rllvag8c9rh709847_dien_ap_tieu_thu_00004_2');
+      const powerEl = this.querySelector('sensor.vf6_rllvag8c9rh709847_dien_ap_tieu_thu_00004_2');
       
       if (chargeLimitEl) chargeLimitEl.innerText = chargeLimit !== '--' ? `${chargeLimit}%` : '--';
       if (chargeTimeEl) chargeTimeEl.innerText = (chargeTimeRemain && chargeTimeRemain !== 'unknown') ? `${chargeTimeRemain}` : '--';
