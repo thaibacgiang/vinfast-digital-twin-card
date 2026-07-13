@@ -1644,6 +1644,7 @@ class VinFastDigitalTwin extends HTMLElement {
     
     const nameEl = this.querySelector('#vf-name');
     const weatherCondition = getValidState('thoi_tiet_hien_tai'); const outsideTemp = getValidState('nhiet_do_ngoai_troi_gps');
+    const drivingState = getValidState('ten_dinh_danh_xe_mqtt'); // Lấy nội dung sensor
 
     if(nameEl) {
         if (weatherCondition && outsideTemp && outsideTemp !== '--') {
