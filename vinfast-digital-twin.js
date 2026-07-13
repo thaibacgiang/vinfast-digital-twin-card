@@ -976,21 +976,6 @@ class VinFastDigitalTwin extends HTMLElement {
                               <div style="display:flex; justify-content:space-between; align-items:center; background:var(--primary-background-color, white); padding:8px 12px; border-radius:8px; border:1px solid var(--divider-color, #e2e8f0);">
                                   <div style="display:flex; align-items:center; gap:6px; color:var(--secondary-text-color, #475569);"><ha-icon icon="mdi:leaf-off" style="color:#ef4444; --mdc-icon-size:16px;"></ha-icon>Hao hụt dự kiến:</div>
                                   <b id="dt-range-drop-trip" style="font-size:13px; color:#ef4444;">--</b>
-                      </div>
-                      <div style="display:flex; gap:6px;">
-                        <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; background:var(--primary-background-color, white); padding:6px; border-radius:8px; border:1px solid var(--divider-color, #e2e8f0);">
-                          <div style="font-size:10px; color:var(--secondary-text-color, #475569);">CẮM SẠC LÚC</div>
-                          <b id="dt-charge-soc-start" style="font-size:13px; color:#3b82f6;">--%</b>
-                          <div id="dt-charge-start-time" style="font-size:10px; color:#64748b; margin-top:2px;">
-                            <span id="dt-charge-start-time-value">--:--</span>
-                          </div>
-                        </div>
-                        <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; background:var(--primary-background-color, white); padding:6px; border-radius:8px; border:1px solid var(--divider-color, #e2e8f0);">
-                          <div style="font-size:10px; color:var(--secondary-text-color, #475569);">RÚT SẠC LÚC</div>
-                          <b id="dt-charge-soc-end" style="font-size:13px; color:#10b981;">--%</b>
-                          <div id="dt-charge-end-time" style="font-size:10px; color:#64748b; margin-top:2px;">
-                            <span id="dt-charge-end-time-value">--:--</span>
- 
                               </div>
                           </div>
                       </div>
