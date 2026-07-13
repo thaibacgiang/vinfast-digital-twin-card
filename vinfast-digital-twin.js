@@ -1643,13 +1643,39 @@ class VinFastDigitalTwin extends HTMLElement {
     const carModel = getValidState('ten_dong_xe') || "";
     
     const nameEl = this.querySelector('#vf-name');
-    const weatherCondition = getValidState('thoi_tiet_hien_tai'); const outsideTemp = getValidState('nhiet_do_ngoai_troi_gps');
+    const weatherCondition = getValidState('thoi_tiet_hien_tai'); 
+    const outsideTemp = getValidState('nhiet_do_ngoai_troi_gps');
     const drivingState = getValidState('ten_dinh_danh_xe_mqtt'); // Lấy nội dung sensor
 
-    if(nameEl) {
+    if (nameEl) {
+        // Thêm class và style để căn sát lề trái
+        nameEl.style.textAlign = 'left';
+        nameEl.style.paddingLeft = '0';
+        nameEl.style.marginLeft = '0';
         if (weatherCondition && outsideTemp && outsideTemp !== '--') {
-            nameEl.innerHTML = `<div style="display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: bold; color: var(--secondary-text-color, #64748b);"><ha-icon icon="mdi:weather-partly-cloudy" style="--mdc-icon-size: 20px; color: #00bcd4;"></ha-icon><span>${outsideTemp}°C | ${weatherCondition}</span></div>`;
-        } else nameEl.innerText = name;
+            nameEl.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: bold; color: var(--secondary-text-color, #64748b);">
+                        <ha-icon icon="mdi:weather-partly-cloudy" style="--mdc-icon-size: 20px; color: #00bcd4;"></ha-icon>
+                        <span>${outsideTemp}°C | ${weatherCondition}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary-text-color, #64748b);">
+                        <ha-icon icon="mdi:car-info" style="--mdc-icon-size: 14px; color: #2563eb;"></ha-icon>
+                        <span>${drivingState && drivingState !== 'unknown' && drivingState !== '--' ? drivingState : '--'}</span>
+                    </div>
+                </div>
+            `;
+        } else {
+            nameEl.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <div style="font-size: 16px; font-weight: bold; color: var(--primary-text-color);">${name}</div>
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary-text-color, #64748b);">
+                        <ha-icon icon="mdi:car-info" style="--mdc-icon-size: 14px; color: #2563eb;"></ha-icon>
+                        <span>${drivingState && drivingState !== 'unknown' && drivingState !== '--' ? drivingState : '--'}</span>
+                    </div>
+                </div>
+            `;
+        }
     }
 
     const statBadgeEl = this.querySelector('#vf-status-badge');
