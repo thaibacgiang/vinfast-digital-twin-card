@@ -978,6 +978,26 @@ class VinFastDigitalTwin extends HTMLElement {
                                   <b id="dt-range-drop-trip" style="font-size:13px; color:#ef4444;">--</b>
  
                               </div>
+            <!-- Thêm phần hiển thị thời gian cắm/rút sạc -->
+                             <div style="display:flex; gap:6px;">
+                                 <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; background:var(--primary-background-color, white); padding:6px; border-radius:8px; border:1px solid var(--divider-color, #e2e8f0);">
+                                     <div style="font-size:10px; color:var(--secondary-text-color, #475569);">CẮM SẠC LÚC</div>
+                                     <b id="dt-charge-soc-start" style="font-size:13px; color:#3b82f6;">--%</b>
+                                     <div id="dt-charge-start-time" style="font-size:10px; color:#64748b; margin-top:2px;">
+                                         <span id="dt-charge-start-time-value">--:--</span>
+                                     </div>
+                                 </div>
+                                 <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; background:var(--primary-background-color, white); padding:6px; border-radius:8px; border:1px solid var(--divider-color, #e2e8f0);">
+                                     <div style="font-size:10px; color:var(--secondary-text-color, #475569);">RÚT SẠC LÚC</div>
+                                     <b id="dt-charge-soc-end" style="font-size:13px; color:#10b981;">--%</b>
+                                     <div id="dt-charge-end-time" style="font-size:10px; color:#64748b; margin-top:2px;">
+                                         <span id="dt-charge-end-time-value">--:--</span>
+                                     </div>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                 </div>                              
                           </div>
                       </div>
                   </div>
@@ -1861,13 +1881,48 @@ class VinFastDigitalTwin extends HTMLElement {
 
     const dtSohEl = this.querySelector('#dt-soh'); if (dtSohEl) dtSohEl.innerText = getValidState('suc_khoe_pin_soh_tinh_toan') ? `${getValidState('suc_khoe_pin_soh_tinh_toan')}%` : '--';
     const dtChargeEffEl = this.querySelector('#dt-charge-eff'); if (dtChargeEffEl) dtChargeEffEl.innerText = getValidState('hieu_suat_sac_thuc_te_lan_cuoi') ? `${getValidState('hieu_suat_sac_thuc_te_lan_cuoi')}%` : '--';
-    const dtChargeSocStartEl = this.querySelector('#dt-charge-soc-start'); if (dtChargeSocStartEl) dtChargeSocStartEl.innerText = `${getValidState('pin_luc_cam_sac_lan_cuoi') || '--'}%`;
-    
+    const dtChargeSocStartEl = this.querySelector('#dt-charge-soc-start');
+    const dtChargeStartTimeEl = this.querySelector('#dt-charge-start-time-value');
     const dtChargeSocEndEl = this.querySelector('#dt-charge-soc-end');
-    if (dtChargeSocEndEl) { 
-        let endSoc = getValidState('pin_luc_rut_sac_lan_cuoi'); 
-        if (isCharging) endSoc = batt; 
-        dtChargeSocEndEl.innerText = `${endSoc || '--'}%`; 
+    const dtChargeEndTimeEl = this.querySelector('#dt-charge-end-time-value');
+
+    let lastChargeStartSOC = '--';
+    let lastChargeStartTime = '--';
+    let lastChargeEndSOC = '--';
+    let lastChargeEndTime = '--';
+
+// Lấy dữ liệu từ lịch sử sạc nếu có
+    if (this._chargeHistoryData && this._chargeHistoryData.length > 0) {
+        const lastCharge = this._chargeHistoryData[0];
+        if (lastCharge.start_soc) lastChargeStartSOC = lastCharge.start_soc;
+        if (lastCharge.start_time) lastChargeStartTime = lastCharge.start_time;
+        if (lastCharge.end_soc) lastChargeEndSOC = lastCharge.end_soc;
+        if (lastCharge.end_time) lastChargeEndTime = lastCharge.end_time;
+    }
+
+// Cập nhật thông tin cắm sạc
+        if (dtChargeSocStartEl) {
+            const startSoc = getValidState('pin_luc_cam_sac_lan_cuoi') || lastChargeStartSOC;
+            dtChargeSocStartEl.innerText = `${startSoc || '--'}%`;
+        }
+
+    if (dtChargeStartTimeEl) {
+        dtChargeStartTimeEl.innerText = lastChargeStartTime !== '--' ? lastChargeStartTime : '--:--';
+    }
+
+// Cập nhật thông tin rút sạc
+    if (dtChargeSocEndEl) {
+        let endSoc = getValidState('pin_luc_rut_sac_lan_cuoi') || lastChargeEndSOC;
+        const c_status = String(getValidState('trang_thai_sac') || "0");
+    // Nếu đang sạc (status == 1), hiển thị pin hiện tại
+        if (c_status == "1") {
+            endSoc = batt;
+        }
+        dtChargeSocEndEl.innerText = `${endSoc || '--'}%`;
+    }
+
+    if (dtChargeEndTimeEl) {
+        dtChargeEndTimeEl.innerText = lastChargeEndTime !== '--' ? lastChargeEndTime : '--:--';
     }
     
     const dtRangeMaxEl = this.querySelector('#dt-range-max'); if (dtRangeMaxEl) dtRangeMaxEl.innerText = `${getValidState('quang_duong_cong_bo_max') || '--'} km`;
