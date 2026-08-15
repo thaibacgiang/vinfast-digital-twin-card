@@ -1776,7 +1776,7 @@ class VinFastDigitalTwin extends HTMLElement {
         if (chargeTimeEl) chargeTimeEl.innerText = (chargeTimeRemain && chargeTimeRemain !== 'unknown') ? `${chargeTimeRemain}` : '--';
         if (chargeStatusTextEl) chargeStatusTextEl.innerText = statusTextRaw.toLowerCase().includes('đầy') || statusTextRaw.toLowerCase().includes('hoàn tất') ? "Đã sạc đầy" : "Hệ thống đang sạc";
         
-        let pwr = getValidState('vf6_rllvag8c9rh709847_cong_suat_sac_tram') || getValidState('cong_suat_sac_trung_binh_lan_cuoi') || getValidState('cong_suat_sac_tram') || getValidState('cong_suat_sac');
+        let pwr = getValidState('cong_suat_sac_tram') || getValidState('cong_suat_sac_trung_binh_lan_cuoi') || getValidState('cong_suat_sac_tinh_toan_live') || getValidState('cong_suat_sac');
         if (powerEl) powerEl.innerText = pwr ? `${pwr} kW` : 'Đang tính...';
     } else if (chargingBanner) {
         chargingBanner.style.display = 'none';
