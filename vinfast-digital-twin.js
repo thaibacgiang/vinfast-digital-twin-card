@@ -1802,7 +1802,7 @@ class VinFastDigitalTwin extends HTMLElement {
 // ============================================================
     const trip = getValidState('quang_duong_chuyen_di_trip');
     const tripEnergy = getValidState('dien_nang_tieu_thu_trip');
-
+    const tripAvgSpeed = getValidState('toc_do_tb_chuyen_di');
     //
     const effKwh = getValidState('hieu_suat_tieu_thu_trung_binh_xe') || '--';
     this._lifetimeEfficiency = effKwh;
