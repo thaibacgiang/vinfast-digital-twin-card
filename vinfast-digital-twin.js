@@ -1774,13 +1774,13 @@ class VinFastDigitalTwin extends HTMLElement {
         
         if (chargeLimitEl) chargeLimitEl.innerText = chargeLimit !== '--' ? `${chargeLimit}%` : '--';
         if (chargeTimeEl) chargeTimeEl.innerText = (chargeTimeRemain && chargeTimeRemain !== 'unknown') ? `${chargeTimeRemain}` : '--';
-        const chargeStatus = getValidState('trang_thai_sac') || 'Không rõ';
-        const chargeFinishTime = getValidState('gio_hoan_tat_sac_tinh_toan');
+        const chargeStatus = (getValidState('trang_thai_sac') || 'Không rõ').trim();
+        const chargeFinishTime = (getValidState('gio_hoan_tat_sac_tinh_toan') || '').trim();
 
         if (chargeStatusTextEl) {
-            if (chargeStatus === 'Đang sạc' && chargeFinishTime) {
+            if (chargeStatus.includes('Đang sạc') && chargeFinishTime) {
                 chargeStatusTextEl.innerText =
-                    `${chargeStatus} - Hoàn tất lúc ${chargeFinishTime}`;
+                    `${chargeStatus} Đến ${chargeFinishTime}`;
             } else {
                 chargeStatusTextEl.innerText = chargeStatus;
             }
