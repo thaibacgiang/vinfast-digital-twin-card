@@ -1800,83 +1800,10 @@ class VinFastDigitalTwin extends HTMLElement {
         if (!range || range === '0' || range === '0.0' || range === '--' || range === 'unknown') range = getValidState('quang_duong_cong_bo_max');
     }
 // ============================================================
-// TRIP - SENSOR LƯU GIÁ TRỊ BÊN NGOÀI VINFAST
-// ============================================================
+    const trip = getValidState('quang_duong_chuyen_di_trip');
+    const tripEnergy = getValidState('dien_nang_tieu_thu_trip');
 
-    const trip =
-        hass.states['sensor.quang_duong_chuyen_di_trip']?.state;
-
-    const tripEnergy =
-        hass.states['sensor.dien_nang_tieu_thu_trip']?.state;
-
-    const tripAvgSpeed =
-        hass.states['sensor.toc_do_tb_chuyen_di']?.state;
-
-
-// Kiểm tra giá trị hợp lệ
-    const validTrip =
-        trip &&
-        trip !== 'unknown' &&
-        trip !== 'unavailable' &&
-        trip !== '0';
-
-    const validTripEnergy =
-        tripEnergy &&
-        tripEnergy !== 'unknown' &&
-        tripEnergy !== 'unavailable';
-
-    const validTripAvgSpeed =
-        tripAvgSpeed &&
-        tripAvgSpeed !== 'unknown' &&
-        tripAvgSpeed !== 'unavailable';
-
-
-// ============================================================
-// HIỂN THỊ TRIP HIỆN TẠI
-// ============================================================
-
-    const tripEl = this.querySelector('#vf-stat-trip');
-
-    if (tripEl) {
-        tripEl.innerText =
-            validTrip ? `${trip} km` : '--';
-    }
-
-
-// ============================================================
-// CHI TIẾT TRIP
-// ============================================================
-
-    const tripDistanceEl =
-        this.querySelector('#dt-trip-distance');
-
-    if (tripDistanceEl) {
-        tripDistanceEl.innerText =
-            validTrip ? `${trip} km` : '--';
-    }
-
-
-    const tripAvgSpeedEl =
-        this.querySelector('#dt-trip-avg-speed');
-
-    if (tripAvgSpeedEl) {
-        tripAvgSpeedEl.innerText =
-            validTripAvgSpeed
-                ? `${tripAvgSpeed} km/h`
-                : '--';
-    }
-
-
-    const tripEnergyEl =
-        this.querySelector('#dt-trip-energy');
-
-    if (tripEnergyEl) {
-        tripEnergyEl.innerText =
-            validTripEnergy
-                ? `${tripEnergy} kWh`
-                : '--';
-    }
-    //
+    const tripAvgSpeed = getValidState('toc_do_tb_chuyen_di');
     const effKwh = getValidState('hieu_suat_tieu_thu_trung_binh_xe') || '--';
     this._lifetimeEfficiency = effKwh;
     const effRangePerPercent = getValidState('quang_duong_di_duoc_moi_1_pin') || '--';
@@ -1907,21 +1834,10 @@ class VinFastDigitalTwin extends HTMLElement {
     }
 
     const renderStat = (id, val, unit) => { const el = this.querySelector(id); if(el) { if (val && val !== 'unknown' && val !== '--') el.innerHTML = `${val}<span class="stat-unit">${unit}</span>`; else el.innerHTML = '--'; } };
-    const tripEl = this.querySelector('#vf-stat-trip');
-
-    if (tripEl) {
-        tripEl.innerText =
-            trip !== '--'
-                ? `${trip} km`
-                : '--';
-    }
-    renderStat('#vf-stat-daily-dist', getValidState('quang_duong_di_trong_ngay'), 'km');
-    const dtDailyEnergyEl = this.querySelector('#dt-daily-energy'); 
-    if (dtDailyEnergyEl) {
-        let val = getValidState('nang_luong_tieu_thu_trong_ngay');
-        dtDailyEnergyEl.innerText = (val !== null && val !== '') ? `${val} kWh` : '--';
-    }
+    renderStat('#vf-stat-batt-range', batt, '%'); 
+    renderStat('#vf-stat-trip', trip, 'km');
     
+
     let phanhTay = getValidState('phanh_tay') || getValidState('phanh_tay_dien_tu');
     if (carModel.toUpperCase().includes('VF3') || carModel.toUpperCase().includes('VF 3')) {
         if (gear.includes('P')) phanhTay = 'Kéo phanh tay'; else if (gear.includes('D') || gear.includes('R') || gear.includes('N')) phanhTay = 'Nhả phanh tay';
@@ -2028,25 +1944,9 @@ class VinFastDigitalTwin extends HTMLElement {
     const dtRangeAiEl = this.querySelector('#dt-range-ai'); if (dtRangeAiEl) dtRangeAiEl.innerText = `${getValidState('quang_duong_thuc_te_day_100_pin') || '--'} km`;
     const dtTotalKwhEl = this.querySelector('#dt-total-kwh'); if (dtTotalKwhEl) dtTotalKwhEl.innerText = `${getValidState('tong_dien_nang_da_sac') || '--'} kWh`;
     const dtTotalCostEl = this.querySelector('#dt-total-cost'); if (dtTotalCostEl) dtTotalCostEl.innerText = `${getValidState('tong_chi_phi_sac_quy_doi') || '--'} VNĐ`;
-    const dtTripAvgSpeedEl =
-        this.querySelector('#dt-trip-avg-speed');
+    const dtTripAvgSpeedEl = this.querySelector('#dt-trip-avg-speed'); if (dtTripAvgSpeedEl) dtTripAvgSpeedEl.innerText = `${getValidState('toc_do_tb_chuyen_di') || '--'} km/h`;
+    const dtTripEnergyEl = this.querySelector('#dt-trip-energy'); if (dtTripEnergyEl) dtTripEnergyEl.innerText = `${getValidState('dien_nang_tieu_thu_trip') || '--'} kWh`;
 
-    if (dtTripAvgSpeedEl) {
-        dtTripAvgSpeedEl.innerText =
-            tripAvgSpeed !== '--'
-                ? `${tripAvgSpeed} km/h`
-                : '--';
-    }
-    const dtTripEnergyEl =
-        this.querySelector('#dt-trip-energy');
-
-    if (dtTripEnergyEl) {
-        dtTripEnergyEl.innerText =
-            tripEnergy !== '--'
-                ? `${tripEnergy} kWh`
-                : '--';
-    }
-//
     const aiAdvisor = getValidState('co_van_xe_dien_ai');
     const aiContainer = this.querySelector('#vf-ai-advisor-container');
     const aiTextEl = this.querySelector('#vf-ai-text');
