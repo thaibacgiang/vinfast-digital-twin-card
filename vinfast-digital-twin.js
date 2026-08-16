@@ -1771,6 +1771,7 @@ class VinFastDigitalTwin extends HTMLElement {
         const chargeTimeEl = this.querySelector('#vf-charge-time'); 
         const chargeStatusTextEl = this.querySelector('#vf-charge-status-text'); 
         const powerEl = this.querySelector('#vf-charge-power');
+
         
         if (chargeLimitEl) chargeLimitEl.innerText = chargeLimit !== '--' ? `${chargeLimit}%` : '--';
         if (chargeTimeEl) chargeTimeEl.innerText = (chargeTimeRemain && chargeTimeRemain !== 'unknown') ? `${chargeTimeRemain}` : '--';
@@ -1798,8 +1799,9 @@ class VinFastDigitalTwin extends HTMLElement {
         range = getValidState('quang_duong_con_lai_theo_hieu_suat');
         if (!range || range === '0' || range === '0.0' || range === '--' || range === 'unknown') range = getValidState('quang_duong_cong_bo_max');
     }
-    const trip = getValidState('quang_duong_chuyen_di_trip');
-    const tripEnergy = getValidState('dien_nang_tieu_thu_trip');
+    const trip = getValidState('sensor.quang_duong_chuyen_di_trip');
+    const tripEnergy = getValidState('sensor.dien_nang_tieu_thu_trip');
+    const tripAvgSpeed = getValidState('sensor.toc_do_tb_chuyen_di');
     const effKwh = getValidState('hieu_suat_tieu_thu_trung_binh_xe') || '--';
     this._lifetimeEfficiency = effKwh;
     const effRangePerPercent = getValidState('quang_duong_di_duoc_moi_1_pin') || '--';
