@@ -1799,9 +1799,17 @@ class VinFastDigitalTwin extends HTMLElement {
         range = getValidState('quang_duong_con_lai_theo_hieu_suat');
         if (!range || range === '0' || range === '0.0' || range === '--' || range === 'unknown') range = getValidState('quang_duong_cong_bo_max');
     }
-    const trip = getValidState('sensor.quang_duong_chuyen_di_trip');
-    const tripEnergy = getValidState('sensor.dien_nang_tieu_thu_trip');
-    const tripAvgSpeed = getValidState('sensor.toc_do_tb_chuyen_di');
+    const trip = hass.states[
+        'sensor.quang_duong_chuyen_di_trip'
+    ]?.state;
+
+    const tripEnergy = hass.states[
+        'sensor.dien_nang_tieu_thu_trip'
+    ]?.state;
+
+    const tripAvgSpeed = hass.states[
+        'sensor.toc_do_tb_chuyen_di'
+    ]?.state;
     const effKwh = getValidState('hieu_suat_tieu_thu_trung_binh_xe') || '--';
     this._lifetimeEfficiency = effKwh;
     const effRangePerPercent = getValidState('quang_duong_di_duoc_moi_1_pin') || '--';
