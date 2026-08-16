@@ -1907,7 +1907,14 @@ class VinFastDigitalTwin extends HTMLElement {
     }
 
     const renderStat = (id, val, unit) => { const el = this.querySelector(id); if(el) { if (val && val !== 'unknown' && val !== '--') el.innerHTML = `${val}<span class="stat-unit">${unit}</span>`; else el.innerHTML = '--'; } };
-    renderStat('#vf-stat-batt-range', batt, '%');    renderStat('#vf-stat-trip', getValidState('quang_duong_chuyen_di_trip'), 'km');
+    const tripEl = this.querySelector('#vf-stat-trip');
+
+    if (tripEl) {
+        tripEl.innerText =
+            trip !== '--'
+                ? `${trip} km`
+                : '--';
+    }
     renderStat('#vf-stat-daily-dist', getValidState('quang_duong_di_trong_ngay'), 'km');
     const dtDailyEnergyEl = this.querySelector('#dt-daily-energy'); 
     if (dtDailyEnergyEl) {
@@ -2021,9 +2028,25 @@ class VinFastDigitalTwin extends HTMLElement {
     const dtRangeAiEl = this.querySelector('#dt-range-ai'); if (dtRangeAiEl) dtRangeAiEl.innerText = `${getValidState('quang_duong_thuc_te_day_100_pin') || '--'} km`;
     const dtTotalKwhEl = this.querySelector('#dt-total-kwh'); if (dtTotalKwhEl) dtTotalKwhEl.innerText = `${getValidState('tong_dien_nang_da_sac') || '--'} kWh`;
     const dtTotalCostEl = this.querySelector('#dt-total-cost'); if (dtTotalCostEl) dtTotalCostEl.innerText = `${getValidState('tong_chi_phi_sac_quy_doi') || '--'} VNĐ`;
-    const dtTripAvgSpeedEl = this.querySelector('#dt-trip-avg-speed'); if (dtTripAvgSpeedEl) dtTripAvgSpeedEl.innerText = `${getValidState('toc_do_tb_chuyen_di') || '--'} km/h`;
-    const dtTripEnergyEl = this.querySelector('#dt-trip-energy'); if (dtTripEnergyEl) dtTripEnergyEl.innerText = `${getValidState('dien_nang_tieu_thu_trip') || '--'} kWh`;
+    const dtTripAvgSpeedEl =
+        this.querySelector('#dt-trip-avg-speed');
 
+    if (dtTripAvgSpeedEl) {
+        dtTripAvgSpeedEl.innerText =
+            tripAvgSpeed !== '--'
+                ? `${tripAvgSpeed} km/h`
+                : '--';
+    }
+    const dtTripEnergyEl =
+        this.querySelector('#dt-trip-energy');
+
+    if (dtTripEnergyEl) {
+        dtTripEnergyEl.innerText =
+            tripEnergy !== '--'
+                ? `${tripEnergy} kWh`
+                : '--';
+    }
+//
     const aiAdvisor = getValidState('co_van_xe_dien_ai');
     const aiContainer = this.querySelector('#vf-ai-advisor-container');
     const aiTextEl = this.querySelector('#vf-ai-text');
