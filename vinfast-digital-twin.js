@@ -1799,17 +1799,84 @@ class VinFastDigitalTwin extends HTMLElement {
         range = getValidState('quang_duong_con_lai_theo_hieu_suat');
         if (!range || range === '0' || range === '0.0' || range === '--' || range === 'unknown') range = getValidState('quang_duong_cong_bo_max');
     }
-    const trip = hass.states[
-        'sensor.quang_duong_chuyen_di_trip'
-    ]?.state;
+// ============================================================
+// TRIP - SENSOR LƯU GIÁ TRỊ BÊN NGOÀI VINFAST
+// ============================================================
 
-    const tripEnergy = hass.states[
-        'sensor.dien_nang_tieu_thu_trip'
-    ]?.state;
+    const trip =
+        hass.states['sensor.quang_duong_chuyen_di_trip']?.state;
 
-    const tripAvgSpeed = hass.states[
-        'sensor.toc_do_tb_chuyen_di'
-    ]?.state;
+    const tripEnergy =
+        hass.states['sensor.dien_nang_tieu_thu_trip']?.state;
+
+    const tripAvgSpeed =
+        hass.states['sensor.toc_do_tb_chuyen_di']?.state;
+
+
+// Kiểm tra giá trị hợp lệ
+    const validTrip =
+        trip &&
+        trip !== 'unknown' &&
+        trip !== 'unavailable' &&
+        trip !== '0';
+
+    const validTripEnergy =
+        tripEnergy &&
+        tripEnergy !== 'unknown' &&
+        tripEnergy !== 'unavailable';
+
+    const validTripAvgSpeed =
+        tripAvgSpeed &&
+        tripAvgSpeed !== 'unknown' &&
+        tripAvgSpeed !== 'unavailable';
+
+
+// ============================================================
+// HIỂN THỊ TRIP HIỆN TẠI
+// ============================================================
+
+    const tripEl = this.querySelector('#vf-stat-trip');
+
+    if (tripEl) {
+        tripEl.innerText =
+            validTrip ? `${trip} km` : '--';
+    }
+
+
+// ============================================================
+// CHI TIẾT TRIP
+// ============================================================
+
+    const tripDistanceEl =
+        this.querySelector('#dt-trip-distance');
+
+    if (tripDistanceEl) {
+        tripDistanceEl.innerText =
+            validTrip ? `${trip} km` : '--';
+    }
+
+
+    const tripAvgSpeedEl =
+        this.querySelector('#dt-trip-avg-speed');
+
+    if (tripAvgSpeedEl) {
+        tripAvgSpeedEl.innerText =
+            validTripAvgSpeed
+                ? `${tripAvgSpeed} km/h`
+                : '--';
+    }
+
+
+    const tripEnergyEl =
+        this.querySelector('#dt-trip-energy');
+
+    if (tripEnergyEl) {
+        tripEnergyEl.innerText =
+            validTripEnergy
+                ? `${tripEnergy} kWh`
+                : '--';
+    }
+    //
     const effKwh = getValidState('hieu_suat_tieu_thu_trung_binh_xe') || '--';
     this._lifetimeEfficiency = effKwh;
     const effRangePerPercent = getValidState('quang_duong_di_duoc_moi_1_pin') || '--';
