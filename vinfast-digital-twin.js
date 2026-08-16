@@ -1038,7 +1038,7 @@ class VinFastDigitalTwin extends HTMLElement {
               <div class="stat-box clickable" id="box-trip">
                 <div class="box-main">
                   <ha-icon icon="mdi:map-marker-path" style="color: #8b5cf6;"></ha-icon>
-                  <div class="stat-info"><div class="stat-label">TRIP HIỆN TẠI</div><div class="stat-val" id="sensor.quang_duong_chuyen_di_trip">--</div></div>
+                  <div class="stat-info"><div class="stat-label">TRIP HIỆN TẠI</div><div class="stat-val" id="vf-trip-distance">--</div></div>
                 </div>
               </div>
               <div class="stat-box clickable" id="box-charge">
@@ -1050,8 +1050,8 @@ class VinFastDigitalTwin extends HTMLElement {
               
               <div class="stat-detail-container" id="detail-container-3">
                   <div class="stat-detail-content" id="detail-trip">
-                      <div class="detail-row"><span>Tốc độ trung bình:</span> <b id="sensor.toc_do_tb_chuyen_di">--</b></div>
-                      <div class="detail-row"><span>Tiêu thụ chuyến:</span> <b id="'sensor.dien_nang_tieu_thu_trip" style="color:#eab308;">--</b></div>
+                      <div class="detail-row"><span>Tốc độ trung bình:</span> <b id="vf-trip-avg-speed">--</b></div>
+                      <div class="detail-row"><span>Tiêu thụ chuyến:</span> <b id="vf-trip-energy" style="color:#eab308;">--</b></div>
                   </div>
                   <div class="stat-detail-content" id="detail-charge" style="padding:0; overflow:hidden;">
                       <div style="padding:15px; border-bottom:1px solid var(--divider-color, #e2e8f0); display:flex; gap:10px; background:var(--secondary-background-color, #f8fafc);">
