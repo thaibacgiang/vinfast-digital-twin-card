@@ -1802,8 +1802,6 @@ class VinFastDigitalTwin extends HTMLElement {
 // ============================================================
     const trip = getValidState('quang_duong_chuyen_di_trip');
     const tripEnergy = getValidState('dien_nang_tieu_thu_trip');
-    const tripAvgSpeed = getValidState('toc_do_tb_chuyen_di');
-    //
     const effKwh = getValidState('hieu_suat_tieu_thu_trung_binh_xe') || '--';
     this._lifetimeEfficiency = effKwh;
     const effRangePerPercent = getValidState('quang_duong_di_duoc_moi_1_pin') || '--';
@@ -1834,10 +1832,14 @@ class VinFastDigitalTwin extends HTMLElement {
     }
 
     const renderStat = (id, val, unit) => { const el = this.querySelector(id); if(el) { if (val && val !== 'unknown' && val !== '--') el.innerHTML = `${val}<span class="stat-unit">${unit}</span>`; else el.innerHTML = '--'; } };
-    renderStat('#vf-stat-batt-range', batt, '%'); 
-    renderStat('#vf-stat-trip', trip, 'km');
+    renderStat('#vf-stat-batt-range', batt, '%');    renderStat('#vf-stat-trip', getValidState('quang_duong_chuyen_di_trip'), 'km');
+    renderStat('#vf-stat-daily-dist', getValidState('quang_duong_di_trong_ngay'), 'km');
+    const dtDailyEnergyEl = this.querySelector('#dt-daily-energy'); 
+    if (dtDailyEnergyEl) {
+        let val = getValidState('nang_luong_tieu_thu_trong_ngay');
+        dtDailyEnergyEl.innerText = (val !== null && val !== '') ? `${val} kWh` : '--';
+    }
     
-
     let phanhTay = getValidState('phanh_tay') || getValidState('phanh_tay_dien_tu');
     if (carModel.toUpperCase().includes('VF3') || carModel.toUpperCase().includes('VF 3')) {
         if (gear.includes('P')) phanhTay = 'Kéo phanh tay'; else if (gear.includes('D') || gear.includes('R') || gear.includes('N')) phanhTay = 'Nhả phanh tay';
