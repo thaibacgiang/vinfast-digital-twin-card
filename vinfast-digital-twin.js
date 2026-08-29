@@ -331,10 +331,12 @@ class VinFastDigitalTwin extends HTMLElement {
             };
         }
     }
-    
     this.renderCalendar();
     this.switchMode();
     if (typeof this.renderStatsChart === 'function') this.renderStatsChart(7);
+    this.renderTodayTrips();
+    this.renderDailyConsumption();
+
   }
   // Kết thúc khối.
 
@@ -730,7 +732,58 @@ class VinFastDigitalTwin extends HTMLElement {
       } 
   }
   // Kết thúc khối.
+  // Chú thích cho khối: Hiển thị danh sách trip hôm nay
+  renderTodayTrips() {
+      const container = this.querySelector('#dt-trip-list');
+      if (!container) return;
+      const trips = [...(this._tripsData[this._todayStr] || [])];
+      const state = (suffix) => this._hass?.states?.[`sensor.${this._entityPrefix}_${suffix}`]?.state;
+      const activeDistance = Number(state('quang_duong_chuyen_di_trip') || 0);
+      const activeEnergy = Number(state('dien_nang_tieu_thu_trip') || 0);
+      if (activeDistance > 0.05) trips.unshift({ current: true, start_time_str: 'Đang chạy', distance: activeDistance, energy_used: activeEnergy });
+      trips.sort((a, b) => Number(Boolean(b.current)) - Number(Boolean(a.current)) || String(a.start_time_str).localeCompare(String(b.start_time_str)));
+      container.innerHTML = trips.length ? trips.map((trip, index) => {
+          const distance = Number(trip.distance || 0);
+          const energy = Number(trip.energy_used || 0);
+          const efficiency = distance > 0 && energy > 0 ? `${(energy / distance * 100).toFixed(1)} kWh/100km` : '--';
+          return `<div style="padding:8px 0;border-top:1px solid var(--divider-color,#e2e8f0);font-size:11px;">
+              <div style="display:flex;justify-content:space-between;font-weight:800;"><span>${trip.current ? 'Chuyến hiện tại' : `Chuyến ${index + (activeDistance > 0.05 ? 0 : 1)}`}</span><span>${trip.start_time_str || '--:--'}${trip.end_time_str ? ` - ${trip.end_time_str}` : ''}</span></div>
+              <div style="display:flex;justify-content:space-between;color:var(--secondary-text-color,#64748b);margin-top:3px;"><span>${distance.toFixed(2)} km</span><span>${energy.toFixed(2)} kWh</span><span>${efficiency}</span></div>
+          </div>`;
+      }).join('') : '<div style="padding:10px 0;text-align:center;color:#94a3b8;font-size:11px;">Chưa có trip hôm nay.</div>';
+  }
+// Kết thúc khối.
 
+// Chú thích cho khối: Hiển thị tiêu thụ hàng ngày
+  renderDailyConsumption() {
+      const container = this.querySelector('#dt-daily-list');
+      if (!container) return;
+      const state = (suffix) => this._hass?.states?.[`sensor.${this._entityPrefix}_${suffix}`]?.state;
+      const activeDistance = Number(state('quang_duong_chuyen_di_trip') || 0);
+      const activeEnergy = Number(state('dien_nang_tieu_thu_trip') || 0);
+      const rows = [];
+      for (let offset = 0; offset < 30; offset++) {
+          const date = new Date();
+          date.setHours(0, 0, 0, 0);
+          date.setDate(date.getDate() - offset);
+          const dateStr = this.formatDate(date);
+          const totals = (this._tripsData[dateStr] || []).reduce((sum, trip) => {
+              sum.distance += Number(trip.distance || 0);
+              sum.energy += Number(trip.energy_used || 0);
+              return sum;
+          }, { distance: 0, energy: 0 });
+          if (offset === 0) {
+              totals.distance += activeDistance;
+              totals.energy += activeEnergy;
+          }
+          const efficiency = totals.distance > 0 && totals.energy > 0 ? `${(totals.energy / totals.distance * 100).toFixed(1)} kWh/100km` : '--';
+          rows.push(`<div style="display:flex;justify-content:space-between;gap:6px;padding:7px 0;border-top:1px solid var(--divider-color,#e2e8f0);font-size:11px;"><span style="width:72px;font-weight:800;">${offset === 0 ? 'Hôm nay' : dateStr.slice(8) + '/' + dateStr.slice(5, 7)}</span><span>${totals.distance.toFixed(1)} km</span><span>${totals.energy.toFixed(2)} kWh</span><span>${efficiency}</span></div>`);
+      }
+      container.innerHTML = rows.join('');
+  }
+// Kết thúc khối.
+
+  
   // Chú thích cho khối: Thống kê Dải Tốc Độ Tối Ưu (Đồng bộ cảm biến và sửa lỗi chiều dài chuỗi)
   updateDynamicTripStats() {
     const speedElTarget = this.querySelector('#vf-stat-speed');
@@ -1052,6 +1105,7 @@ class VinFastDigitalTwin extends HTMLElement {
                   <div class="stat-detail-content" id="detail-trip">
                       <div class="detail-row"><span>Tốc độ trung bình:</span> <b id="dt-trip-avg-speed">--</b></div>
                       <div class="detail-row"><span>Tiêu thụ chuyến:</span> <b id="dt-trip-energy" style="color:#eab308;">--</b></div>
+                      <div id="dt-trip-list" style="max-height:220px; overflow-y:auto; margin-top:8px;"></div>
                   </div>
                   <div class="stat-detail-content" id="detail-charge" style="padding:0; overflow:hidden;">
                       <div style="padding:15px; border-bottom:1px solid var(--divider-color, #e2e8f0); display:flex; gap:10px; background:var(--secondary-background-color, #f8fafc);">
@@ -1086,6 +1140,7 @@ class VinFastDigitalTwin extends HTMLElement {
               <div class="stat-detail-container" id="detail-container-4">
                   <div class="stat-detail-content" id="detail-daily">
                       <div class="detail-row"><span>Tiêu thụ hôm nay:</span> <b id="dt-daily-energy" style="color:#38bdf8;">--</b></div>
+                      <div id="dt-daily-list" style="max-height:260px; overflow-y:auto; margin-top:8px;"></div>
                   </div>
                   <div class="stat-detail-content" id="detail-stats" style="padding:15px; font-size:12px;">
                       <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
