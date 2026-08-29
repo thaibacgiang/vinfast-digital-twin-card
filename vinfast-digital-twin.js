@@ -98,23 +98,24 @@ class VinFastDigitalTwin extends HTMLElement {
       } catch (e) { return `${parseFloat(lat).toFixed(4)}, ${parseFloat(lon).toFixed(4)}`; }
   }
 
+
   cleanRouteData(points) {
       if (!points || !Array.isArray(points) || points.length === 0) return [];
-      return points.filter(p => Array.isArray(p) && p.length >= 2).map(p => [p[0], p[1], p[2] || 0]); 
+      return points.map(p => {
+          if (Array.isArray(p)) return [Number(p[0]), Number(p[1]), Number(p[2] || 0), Number(p[3] || 0)];
+          return [Number(p.lat), Number(p.lon), Number(p.speed_kmh || 0), Number(p.timestamp_ms || 0)];
+      }).filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]) && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180 && (p[0] !== 0 || p[1] !== 0));
   }
 
   _smoothRouteData(points) {
-      if (!points || points.length < 2) return points;
-      let filtered = [points[0]];
-      for (let i = 1; i < points.length; i++) {
-          let prev = filtered[filtered.length - 1];
-          let curr = points[i];
-          let dist = this.getDistanceFromLatLonInM(prev[0], prev[1], curr[0], curr[1]);
-          if (dist > 2.0 || curr[2] > 0) { filtered.push(curr); }
-      }
-      return filtered;
+      const route = this.cleanRouteData(points);
+      if (route.length < 3) return route;
+      return route.map((point, index) => {
+          if (index === 0 || index === route.length - 1) return point;
+          const before = route[index - 1], after = route[index + 1];
+          return [(before[0] + point[0] + after[0]) / 3, (before[1] + point[1] + after[1]) / 3, point[2], point[3]];
+      });
   }
-
   getBearing(startLat, startLng, destLat, destLng) {
       startLat = startLat * Math.PI / 180; startLng = startLng * Math.PI / 180;
       destLat = destLat * Math.PI / 180; destLng = destLng * Math.PI / 180;
