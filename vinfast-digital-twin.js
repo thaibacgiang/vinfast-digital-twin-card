@@ -291,7 +291,8 @@ class VinFastDigitalTwin extends HTMLElement {
                     distance: trip.distance || 0,
                     start_time_str: trip.start_time || "--:--", 
                     end_time_str: trip.end_time || "--:--",
-                    route: trip.route
+                    route: trip.route,
+                    energy_used: trip.energy_used || 0  // ← THÊM DÒNG NÀY
                 });
             }
         });
