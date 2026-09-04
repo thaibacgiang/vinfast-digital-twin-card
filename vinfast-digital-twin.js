@@ -152,27 +152,113 @@ class VinFastDigitalTwin extends HTMLElement {
     script.onload = () => { setTimeout(() => this.initMap(), 200); };
     document.head.appendChild(script);
   }
-
+  
   initMap() {
     const mapEl = this.querySelector('#vf-map-canvas');
     if (!mapEl || typeof L === 'undefined' || this._map) return;
-    
-    this._map = L.map(mapEl, { zoomControl: false });
-    L.control.zoom({ position: 'bottomright', zoomInTitle: 'Phóng to', zoomOutTitle: 'Thu nhỏ' }).addTo(this._map);
-    
+  
+  // Tạo map với center mặc định (Hà Nội)
+    this._map = L.map(mapEl, { 
+      zoomControl: false,
+      center: [21.0285, 105.8542],
+      zoom: 13
+    });
+  
+    L.control.zoom({ 
+      position: 'bottomright', 
+      zoomInTitle: 'Phóng to', 
+      zoomOutTitle: 'Thu nhỏ' 
+    }).addTo(this._map);
+  
     const zoomCtrl = mapEl.querySelector('.leaflet-control-zoom');
-    if(zoomCtrl) { zoomCtrl.style.marginBottom = '25px'; zoomCtrl.style.marginRight = '12px'; zoomCtrl.style.border = 'none'; zoomCtrl.style.boxShadow = '0 4px 10px rgba(0,0,0,0.1)'; }
-    
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(this._map);
-    
-    this._marker = L.marker([0, 0], {icon: this.getCarIcon(0, 0), opacity: 0, zIndexOffset: 1000}).addTo(this._map);
-    this._polyline = L.polyline([], { color: '#2563eb', weight: 6, opacity: 0.85, lineCap: 'round', lineJoin: 'round', smoothFactor: 2.5 }).addTo(this._map);
+    if(zoomCtrl) { 
+      zoomCtrl.style.marginBottom = '25px'; 
+      zoomCtrl.style.marginRight = '12px'; 
+      zoomCtrl.style.border = 'none'; 
+      zoomCtrl.style.boxShadow = '0 4px 10px rgba(0,0,0,0.1)'; 
+    }
+  
+  // ====== PHẦN THAY ĐỔI CHÍNH: THÊM NHIỀU LAYER DỰ PHÒNG ======
+  
+  // Layer 1: CartoDB Voyager (mặc định)
+    const cartoLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { 
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; CartoDB'
+    });
+  
+  // Layer 2: OpenStreetMap (dự phòng)
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    });
+  
+  // Layer 3: Stadia Maps (dự phòng thứ 2)
+    const stadiaLayer = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20,
+      attribution: '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a>, &copy; OpenStreetMap'
+    });
+  
+  // Thêm layer mặc định
+    cartoLayer.addTo(this._map);
+  
+  // Lưu các layer để chuyển đổi
+    this._tileLayers = {
+      carto: cartoLayer,
+      osm: osmLayer,
+      stadia: stadiaLayer
+    };
+    this._currentTileLayer = 'carto';
+  
+  // ====== KẾT THÚC PHẦN THAY ĐỔI ======
+  
+    this._marker = L.marker([0, 0], {
+      icon: this.getCarIcon(0, 0), 
+      opacity: 0, 
+      zIndexOffset: 1000
+    }).addTo(this._map);
+  
+    this._polyline = L.polyline([], { 
+      color: '#2563eb', 
+      weight: 6, 
+      opacity: 0.85, 
+      lineCap: 'round', 
+      lineJoin: 'round', 
+      smoothFactor: 2.5 
+    }).addTo(this._map);
+  
     this._stationLayer = L.layerGroup().addTo(this._map);
     this._historyLayerGroup = L.layerGroup().addTo(this._map);
-    
+  
+  // Bắt lỗi tile để tự động chuyển layer
+    this._map.on('tileerror', (error) => {
+      console.warn('Tile lỗi, chuyển sang OSM dự phòng', error);
+      this._switchTileLayer('osm');
+    });
+  
     new IntersectionObserver((entries) => { 
-        if (entries[0].isIntersecting && this._map) setTimeout(() => this._map.invalidateSize(), 100); 
+      if (entries[0].isIntersecting && this._map) {
+        setTimeout(() => {
+          this._map.invalidateSize();
+        // Nếu sau 3s vẫn lỗi, chuyển sang OSM
+          setTimeout(() => this._switchTileLayer('osm'), 3000);
+        }, 100);
+      } 
     }).observe(mapEl);
+  }
+
+// ====== THÊM PHƯƠNG THỨC MỚI VÀO CUỐI CLASS (trước dòng getCardSize) ======
+  _switchTileLayer(layerName) {
+    if (!this._tileLayers || this._currentTileLayer === layerName) return;
+  
+    const oldLayer = this._tileLayers[this._currentTileLayer];
+    const newLayer = this._tileLayers[layerName];
+  
+    if (oldLayer && newLayer) {
+      this._map.removeLayer(oldLayer);
+      newLayer.addTo(this._map);
+      this._currentTileLayer = layerName;
+      console.log(`Đã chuyển sang layer: ${layerName}`);
+    }
   }
   // Kết thúc khối.
 
