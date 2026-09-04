@@ -163,9 +163,9 @@ class VinFastDigitalTwin extends HTMLElement {
     const zoomCtrl = mapEl.querySelector('.leaflet-control-zoom');
     if(zoomCtrl) { zoomCtrl.style.marginBottom = '25px'; zoomCtrl.style.marginRight = '12px'; zoomCtrl.style.border = 'none'; zoomCtrl.style.boxShadow = '0 4px 10px rgba(0,0,0,0.1)'; }
     
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap'
+    L.tileLayer('https://tiles.openstreetmap.vn/vietnam/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap Vietnam'
     }).addTo(this._map);
     
     this._marker = L.marker([0, 0], {icon: this.getCarIcon(0, 0), opacity: 0, zIndexOffset: 1000}).addTo(this._map);
