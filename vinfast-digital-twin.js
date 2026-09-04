@@ -163,7 +163,7 @@ class VinFastDigitalTwin extends HTMLElement {
     const zoomCtrl = mapEl.querySelector('.leaflet-control-zoom');
     if(zoomCtrl) { zoomCtrl.style.marginBottom = '25px'; zoomCtrl.style.marginRight = '12px'; zoomCtrl.style.border = 'none'; zoomCtrl.style.boxShadow = '0 4px 10px rgba(0,0,0,0.1)'; }
     
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(this._map);
+    L.tileLayer('https://tile.openfreemap.org/streets/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(this._map);
 
     
     this._marker = L.marker([0, 0], {icon: this.getCarIcon(0, 0), opacity: 0, zIndexOffset: 1000}).addTo(this._map);
