@@ -42,6 +42,13 @@ class VinFastDigitalTwin extends HTMLElement {
     this._addressCache = {};
     
     this._lastTotalSessions = undefined;
+
+    // Khối Lộ trình / Dẫn đường / Trạm sạc trên tuyến
+    this._routeLayer = null;
+    this._routePlan = null;
+    this._routeGeo = null;
+    this._routeDest = null;
+    this._routeBusy = false;
   }
   // Kết thúc khối.
 
@@ -125,6 +132,21 @@ class VinFastDigitalTwin extends HTMLElement {
       return (brng * 180 / Math.PI + 360) % 360;
   }
 
+  _splitRouteByGap(points, maxDistM = 250) {
+      if (!points || points.length < 2) return [points || []];
+      const segments = []; let seg = [points[0]];
+      for (let i = 1; i < points.length; i++) {
+          const prev = points[i - 1], cur = points[i];
+          const dLat = (cur[0] - prev[0]) * Math.PI / 180, dLon = (cur[1] - prev[1]) * Math.PI / 180;
+          const a = Math.sin(dLat/2)**2 + Math.cos(prev[0]*Math.PI/180)*Math.cos(cur[0]*Math.PI/180)*Math.sin(dLon/2)**2;
+          const dist = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          if (dist > maxDistM) { if (seg.length) segments.push(seg); seg = []; }
+          seg.push(cur);
+      }
+      if (seg.length) segments.push(seg);
+      return segments.length ? segments : [points];
+  }
+
   _smoothRotation(targetAngle) {
       if (this._currentAngle === undefined) { this._currentAngle = targetAngle; return targetAngle; }
       let diff = targetAngle - (this._currentAngle % 360);
@@ -169,6 +191,8 @@ class VinFastDigitalTwin extends HTMLElement {
     this._polyline = L.polyline([], { color: '#2563eb', weight: 6, opacity: 0.85, lineCap: 'round', lineJoin: 'round', smoothFactor: 2.5 }).addTo(this._map);
     this._stationLayer = L.layerGroup().addTo(this._map);
     this._historyLayerGroup = L.layerGroup().addTo(this._map);
+    this._routeLayer = L.layerGroup().addTo(this._map);
+        this._signLayer = L.layerGroup().addTo(this._map);
     
     new IntersectionObserver((entries) => { 
         if (entries[0].isIntersecting && this._map) setTimeout(() => this._map.invalidateSize(), 100); 
@@ -263,10 +287,9 @@ class VinFastDigitalTwin extends HTMLElement {
     });
     
     let rawTrips = Array.from(uniqueTripsMap.values());
+    let groupedData = {};
 
     if (rawTrips && Array.isArray(rawTrips) && rawTrips.length > 0) {
-        let groupedData = {};
-        
         rawTrips.forEach(trip => {
             let dateStr = "";
             if (trip.date && typeof trip.date === 'string') {
@@ -285,18 +308,22 @@ class VinFastDigitalTwin extends HTMLElement {
 
             if (!groupedData[dateStr]) groupedData[dateStr] = [];
 
-            if (trip.route && Array.isArray(trip.route) && trip.route.length > 0) {
-                groupedData[dateStr].push({
-                    id: trip.id || new Date().getTime(),
-                    time: trip.id || trip.timestamp || 0, 
-                    duration: trip.duration || 0, 
-                    distance: trip.distance || 0,
-                    start_time_str: trip.start_time || "--:--", 
-                    end_time_str: trip.end_time || "--:--",
-                    route: trip.route,
-                    energy_used: trip.energy_used || 0  // ← THÊM DÒNG NÀY
-                });
-            }
+            const rawRoute = Array.isArray(trip.raw_route) && trip.raw_route.length ? trip.raw_route : [];
+            const legacyRoute = Array.isArray(trip.route) ? trip.route : [];
+            groupedData[dateStr].push({
+                id: trip.id || new Date().getTime(),
+                time: Number(trip.start_timestamp || trip.timestamp || trip.id || 0),
+                end_time: Number(trip.end_timestamp || trip.timestamp || trip.id || 0),
+                duration: Number(trip.duration || 0),
+                distance: Number(trip.distance || 0),
+                energy_used: Number(trip.energy_used || 0),
+                start_time_str: trip.start_time || "--:--",
+                end_time_str: trip.end_time || "--:--",
+                // ponytail: route is filtered display data; raw_route remains diagnostic source.
+                route: legacyRoute.length ? legacyRoute : rawRoute,
+                raw_route: rawRoute,
+                raw_recovery: rawRoute.length ? 'preserved' : 'legacy-only'
+            });
         });
 
         this._tripsData = {};
@@ -318,7 +345,8 @@ class VinFastDigitalTwin extends HTMLElement {
                 }
 
                 if (i < dayTrips.length - 1) {
-                    let gapSecs = dayTrips[i+1].time - (trip.time + (trip.duration * 60));
+                    const tripEnd = trip.end_time || (trip.time + (trip.duration * 60));
+                    let gapSecs = dayTrips[i+1].time - tripEnd;
                     if (gapSecs < 0) gapSecs = 0;
                     trip.pauseAfter = gapSecs; 
                     if (gapSecs < 900) pauseSecs += gapSecs; else parkingSecs += gapSecs; 
@@ -334,12 +362,23 @@ class VinFastDigitalTwin extends HTMLElement {
             };
         }
     }
+    
+    // Raw daily track is diagnostic-only. Trip playback remains segmented by saved trip.
+    this._trackData = {};
+    for (const day of Object.keys(groupedData)) {
+        const compact = day.replaceAll('-', '');
+        try {
+            const rawRes = await fetch(`/api/vinfast/trip_track?vin=${vinStr}&date=${compact}&mode=raw`).then(r => r.ok ? r.json() : null);
+            const raw = this.cleanRouteData(rawRes?.points || []);
+            if (raw.length) this._trackData[day] = { raw };
+        } catch (e) { console.debug('VinFast raw track unavailable', day); }
+    }
+
     this.renderCalendar();
     this.switchMode();
     if (typeof this.renderStatsChart === 'function') this.renderStatsChart(7);
     this.renderTodayTrips();
     this.renderDailyConsumption();
-
   }
   // Kết thúc khối.
 
@@ -543,6 +582,7 @@ class VinFastDigitalTwin extends HTMLElement {
               }
           }
           this.renderStations();
+          if (this._routePlan) this._drawRoutePlan();
           if (this._lastLat && this._map) this._map.setView([this._lastLat, this._lastLon], 15);
       } else {
           if(statsPanel) statsPanel.style.display = 'flex';
@@ -556,6 +596,9 @@ class VinFastDigitalTwin extends HTMLElement {
           if (this._marker) this._marker.setOpacity(0); 
           this._polyline.setLatLngs([]); 
           if (this._stationLayer) this._stationLayer.clearLayers(); 
+          if (this._routeLayer) this._routeLayer.clearLayers();
+          if (this._toggleRoutePanel) this._toggleRoutePanel(false);
+          this._setPickMode(false);
 
           const dailySegments = this._tripsData[this._selectedDateStr];
           if (!dailySegments || dailySegments.length === 0) {
@@ -577,7 +620,6 @@ class VinFastDigitalTwin extends HTMLElement {
               
               const newTripSelector = tripSelector.cloneNode(true);
               tripSelector.parentNode.replaceChild(newTripSelector, tripSelector);
-              
               newTripSelector.addEventListener('change', (e) => {
                   let val = e.target.value;
                   this._renderHistoryMap(this._selectedDateStr, val === 'all' ? 'all' : parseInt(val));
@@ -603,12 +645,14 @@ class VinFastDigitalTwin extends HTMLElement {
       if (!dayTrips || dayTrips.length === 0) return;
 
       let tripsToRender = tripIndex === 'all' ? dayTrips : [dayTrips[tripIndex]];
-      const isRawMode = this._mapMode === 'raw';
-      
+      const isRawMode = true;
+
       const btnMode = this.querySelector('#btn-route-mode');
       if (btnMode) {
-          btnMode.innerText = isRawMode ? 'RAW' : 'SMOOTH';
-          btnMode.style.color = isRawMode ? '#f59e0b' : '#10b981';
+          btnMode.innerText = 'RAW';
+          btnMode.style.color = '#f59e0b';
+          btnMode.disabled = true;
+          btnMode.title = 'Lộ trình GPS nguyên bản';
       }
       
       let chargeDuration = 0;
@@ -682,14 +726,16 @@ class VinFastDigitalTwin extends HTMLElement {
 
       let bounds = L.latLngBounds();
       let flatCoordsForReplay = [];
+      let replaySegments = [];
       let stopCount = 1;
 
       tripsToRender.forEach((segmentObj, index) => {
-          let segmentCoords = isRawMode && segmentObj.raw_route ? segmentObj.raw_route : segmentObj.route;
-          if (!segmentCoords) segmentCoords = segmentObj.route || [];
-          if (!Array.isArray(segmentCoords) || segmentCoords.length === 0) return;
-          
-          flatCoordsForReplay.push(...segmentCoords); 
+          let segmentCoords = segmentObj.route?.length ? segmentObj.route : segmentObj.raw_route;
+          segmentCoords = this._smoothRouteData(segmentCoords || []);
+          if (segmentCoords.length === 0) return;
+
+          replaySegments.push(segmentCoords);
+          flatCoordsForReplay.push(...segmentCoords);
 
           const latlngs = segmentCoords.map(pt => [pt[0], pt[1]]);
           L.polyline(latlngs, { color: '#2563eb', weight: 5, opacity: 0.8, lineJoin: 'round', smoothFactor: 0, noClip: true }).addTo(this._historyLayerGroup);
@@ -698,18 +744,18 @@ class VinFastDigitalTwin extends HTMLElement {
           if (index === 0) {
               L.marker(latlngs[0], { icon: L.divIcon({ className: 'marker-start' }) }).addTo(this._historyLayerGroup);
           }
-          
+
           if (index < tripsToRender.length - 1 && tripIndex === 'all') {
               let pauseMins = Math.round((segmentObj.pauseAfter || 0) / 60);
               let isParking = pauseMins >= 15;
               let iconClass = isParking ? 'marker-park' : 'marker-pause';
               let currentStopNum = stopCount++;
-              
+
               let marker = L.marker(latlngs[latlngs.length - 1], { icon: L.divIcon({ className: iconClass, html: currentStopNum }) }).addTo(this._historyLayerGroup);
               let popupHtml = `
                   <div style="font-family:sans-serif; text-align:center; min-width: 140px;">
                       <div style="font-size:11px; font-weight:800; color:${isParking ? '#ef4444' : '#f59e0b'}; margin-bottom:6px; border-bottom:1px solid #e2e8f0; padding-bottom:4px;">
-                          <ha-icon icon="${isParking ? 'mdi:parking' : 'mdi:timer-sand'}" style="--mdc-icon-size:14px; margin-bottom:-2px;"></ha-icon> 
+                          <ha-icon icon="${isParking ? 'mdi:parking' : 'mdi:timer-sand'}" style="--mdc-icon-size:14px; margin-bottom:-2px;"></ha-icon>
                           ${isParking ? 'ĐIỂM ĐỖ XE' : 'ĐIỂM DỪNG'} #${currentStopNum}
                       </div>
                       <div style="font-size:12px; color:#475569; font-weight:600;">
@@ -720,7 +766,7 @@ class VinFastDigitalTwin extends HTMLElement {
               `;
               marker.bindPopup(popupHtml);
           }
-          
+
           if (index === tripsToRender.length - 1) {
               const lastPt = segmentCoords[segmentCoords.length - 1];
               const speed = Array.isArray(lastPt) && lastPt.length > 2 ? lastPt[2] : 0;
@@ -729,6 +775,8 @@ class VinFastDigitalTwin extends HTMLElement {
           }
       });
 
+      this._replaySegments = replaySegments;
+      this._rawRouteCoords = flatCoordsForReplay;
       this._smoothedRouteCoords = flatCoordsForReplay;
       if (bounds.isValid()) {
           this._map.fitBounds(bounds, { padding: [40, 40] }); 
@@ -973,6 +1021,7 @@ class VinFastDigitalTwin extends HTMLElement {
               </div>
               <div class="vf-odo"><div class="vf-odo-label">ODOMETER</div><div class="vf-odo-value"><span id="vf-odo-int"></span> <span class="vf-odo-unit">km</span></div></div>
             </div>
+            <div id="vf-sign-item" style="display:none; align-items:center; gap:6px; margin:-4px 0 8px; padding:0 4px; font-size:12px; font-weight:700;"><ha-icon id="vf-sign-icon" icon="mdi:parking-off" style="--mdc-icon-size:18px;"></ha-icon><span id="vf-sign-text"></span></div>
 
             <div class="vf-car-stage" id="vf-car-stage">
               <div id="vf-status-badge" class="vf-status-badge"></div>
@@ -1240,6 +1289,8 @@ class VinFastDigitalTwin extends HTMLElement {
                             <button class="map-btn" id="btn-stations" title="Tắt/Bật Trạm sạc"><ha-icon icon="mdi:ev-station" style="color:#2563eb;"></ha-icon></button>
                             <button class="map-btn text-btn" id="btn-filter-station" style="display:none; height:18px; margin-top:2px;" title="Lọc trạm AC/DC">ALL</button>
                         </div>
+                        <div class="map-divider"></div>
+                        <button class="map-btn" id="btn-route-plan" title="Lộ trình &amp; trạm sạc trên tuyến"><ha-icon icon="mdi:map-marker-path" style="color:#7c3aed;"></ha-icon></button>
                     </div>
 
                     <div id="history-tools" style="display:none; flex-direction:column; gap:4px;">
@@ -1248,7 +1299,7 @@ class VinFastDigitalTwin extends HTMLElement {
                         <div class="map-divider"></div>
                         <button class="map-btn" id="btn-fix-map" title="Nắn lại bản đồ bằng AI"><ha-icon icon="mdi:magic-staff" style="color:#8b5cf6;"></ha-icon></button>
                         <div class="map-divider"></div>
-                        <button class="map-btn text-btn" id="btn-route-mode" style="width: auto; padding: 0 4px; font-weight: bold; font-size: 10px; color: #f59e0b;" title="Chuyển đổi Dữ liệu Thô / Tinh chỉnh">SMOOTH</button>
+                        <button class="map-btn text-btn" id="btn-route-mode" disabled style="width: auto; padding: 0 4px; font-weight: bold; font-size: 10px; color: #f59e0b;" title="Lộ trình GPS nguyên bản">RAW</button>
                     </div>
                   </div>
 
@@ -1257,6 +1308,20 @@ class VinFastDigitalTwin extends HTMLElement {
                      <div id="vf-suggest-name" style="font-size:14px; font-weight:bold; color:var(--primary-text-color, #1e3a8a); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">--</div>
                      <div style="font-size:12px; color:var(--secondary-text-color, #475569); margin-top:2px;">Phía trước <b id="vf-suggest-dist">--</b> km • <b id="vf-suggest-power">--</b> kW • Trống: <b id="vf-suggest-avail" style="color:#16a34a;">--</b></div>
                      <button id="btn-suggest-nav" style="margin-top:8px; width:100%; background:#2563eb; color:white; border:none; border-radius:8px; padding:6px; font-weight:bold; cursor:pointer;">Dẫn đường ngay</button>
+                  </div>
+
+                  <div id="vf-route-panel" style="display:none; position:absolute; top:8px; left:8px; right:52px; max-height:80%; overflow-y:auto; background:var(--card-background-color, rgba(255,255,255,0.97)); backdrop-filter:blur(10px); padding:10px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.25); z-index:1300; border:1px solid var(--divider-color, #e2e8f0);">
+                     <div style="display:flex; justify-content:space-between; align-items:center;">
+                         <b style="font-size:12px; color:var(--primary-text-color, #1e3a8a); display:flex; align-items:center; gap:4px;"><ha-icon icon="mdi:map-marker-path" style="--mdc-icon-size:16px;"></ha-icon> LỘ TRÌNH &amp; TRẠM SẠC</b>
+                         <button id="btn-route-close" style="background:none; border:none; padding:0; cursor:pointer; color:#64748b;"><ha-icon icon="mdi:close" style="--mdc-icon-size:18px;"></ha-icon></button>
+                     </div>
+                     <textarea id="vf-route-input" rows="2" placeholder="Dán link Google Maps, hoặc nhập địa chỉ điểm đến..." style="width:100%; box-sizing:border-box; margin-top:6px; padding:6px 8px; border-radius:8px; border:1px solid var(--divider-color, #cbd5e1); background:var(--card-background-color, #fff); color:var(--primary-text-color, #1e293b); font-size:12px; font-family:inherit; resize:vertical;"></textarea>
+                     <div style="display:flex; gap:6px; margin-top:6px;">
+                         <button id="btn-route-pick" style="flex:1; background:#f1f5f9; color:#334155; border:none; border-radius:8px; padding:6px; font-weight:bold; font-size:11px; cursor:pointer;">Chọn trên bản đồ</button>
+                         <button id="btn-route-go" style="flex:1; background:#2563eb; color:white; border:none; border-radius:8px; padding:6px; font-weight:bold; font-size:11px; cursor:pointer;">Tính lộ trình</button>
+                     </div>
+                     <div id="vf-route-status" style="display:none; font-size:11px; margin-top:6px;"></div>
+                     <div id="vf-route-result" style="display:none; margin-top:6px;"></div>
                   </div>
               </div>
             </div>
@@ -1810,6 +1875,8 @@ class VinFastDigitalTwin extends HTMLElement {
           };
       }
 
+      this._initRoutePlannerUI();
+
       const callServiceBtn = (btnId, domain, service, entityId) => {
           const btn = this.querySelector(btnId);
           if(btn) btn.onclick = () => { if(this._hass.states[entityId]) this._hass.callService(domain, service, { entity_id: entityId }); };
@@ -1821,11 +1888,13 @@ class VinFastDigitalTwin extends HTMLElement {
 
       const btnReplay = this.querySelector('#btn-replay');
       const iconReplay = this.querySelector('#icon-replay');
-      
+
       if(btnReplay && iconReplay) {
           btnReplay.onclick = () => {
               if (!this._map || !this._marker || !this._polyline) return;
-              if (this._smoothedRouteCoords.length < 2) return alert("Lộ trình hiện tại quá ngắn để phát lại!");
+              const segments = (this._replaySegments || []).filter(segment => Array.isArray(segment) && segment.length >= 2);
+              if (!segments.length) return alert("Lộ trình hiện tại quá ngắn để phát lại!");
+              this._replaySegmentsActive = segments;
 
               if (this._isReplaying && !this._isPaused) {
                   this._isPaused = true; cancelAnimationFrame(this._animationFrameId); iconReplay.setAttribute('icon', 'mdi:play-circle');
@@ -1833,12 +1902,11 @@ class VinFastDigitalTwin extends HTMLElement {
                   this._isPaused = false; iconReplay.setAttribute('icon', 'mdi:pause-circle');
                   this._lastReplayTime = performance.now(); this._animationFrameId = requestAnimationFrame(this._runAnimation);
               } else {
-                  this._isReplaying = true; this._isPaused = false; this._currentReplayIdx = 0; this._replayProgress = 0.0;
+                  this._isReplaying = true; this._isPaused = false; this._currentReplaySegment = 0; this._currentReplayIdx = 0; this._replayElapsedMs = 0;
                   iconReplay.setAttribute('icon', 'mdi:pause-circle');
-                  
-                  this._marker.setOpacity(1); 
-                  
-                  if(this._smoothedRouteCoords[0]) this._map.setView([this._smoothedRouteCoords[0][0], this._smoothedRouteCoords[0][1]], 15);
+                  this._marker.setOpacity(1);
+                  const firstPoint = segments[0][0];
+                  this._map.setView([firstPoint[0], firstPoint[1]], 15);
                   this._lastReplayTime = performance.now(); this._animationFrameId = requestAnimationFrame(this._runAnimation);
               }
           };
@@ -1862,96 +1930,62 @@ class VinFastDigitalTwin extends HTMLElement {
       
       const btnRouteMode = this.querySelector('#btn-route-mode');
       if (btnRouteMode) {
-          btnRouteMode.onclick = () => {
-              this._mapMode = this._mapMode === 'raw' ? 'smooth' : 'raw';
-              const isRawMode = this._mapMode === 'raw';
-              btnRouteMode.innerText = isRawMode ? 'RAW' : 'SMOOTH';
-              btnRouteMode.style.color = isRawMode ? '#f59e0b' : '#10b981';
-              
-              const tripSelector = this.querySelector('#trip-selector');
-              let val = tripSelector ? tripSelector.value : 'all';
-              this._renderHistoryMap(this._selectedDateStr, val === 'all' ? 'all' : parseInt(val));
-          };
+          btnRouteMode.onclick = null;
+          btnRouteMode.disabled = true;
       }
-      
+
       this._runAnimation = (timestamp) => {
           if (!this._isReplaying || this._isPaused) return;
+          const segments = this._replaySegmentsActive;
+          let segmentIndex = this._currentReplaySegment || 0;
+          let coords = segments?.[segmentIndex];
+          if (!coords || coords.length < 2) { this._isReplaying = false; return; }
 
-          const coords = this._smoothedRouteCoords;
-          if (!coords || coords.length < 2) {
-              this._isReplaying = false;
-              iconReplay.setAttribute('icon', 'mdi:play-circle');
-              return;
-          }
-
-          let dt = (timestamp - this._lastReplayTime) / 1000.0;
+          const frameMs = Math.min(250, Math.max(0, timestamp - (this._lastReplayTime || timestamp)));
           this._lastReplayTime = timestamp;
-          if (dt > 0.15) dt = 0.15; // clamp tránh jump khi tab bị mất focus
-
-          // Kết thúc nếu đã tới điểm cuối
-          if (this._currentReplayIdx >= coords.length - 1) {
-              const finalPt = coords[coords.length - 1];
-              this._marker.setLatLng([finalPt[0], finalPt[1]]);
-              this._isReplaying = false; this._isPaused = false;
-              iconReplay.setAttribute('icon', 'mdi:play-circle');
-              if (this._selectedDateStr !== 'LIVE') setTimeout(() => this._marker.setOpacity(0), 2000);
-              return;
+          this._replayElapsedMs = (this._replayElapsedMs || 0) + frameMs * 15.0;
+          let idx = this._currentReplayIdx || 0;
+          while (idx < coords.length - 2) {
+              const currentTs = Number(coords[idx][3] || 0);
+              const nextTs = Number(coords[idx + 1][3] || 0);
+              const segmentMs = nextTs > currentTs ? nextTs - currentTs : 1000;
+              if (this._replayElapsedMs < segmentMs) break;
+              this._replayElapsedMs -= segmentMs;
+              idx++;
           }
+          this._currentReplayIdx = idx;
+          const ptA = coords[idx];
+          const ptB = coords[Math.min(idx + 1, coords.length - 1)];
+          const tsA = Number(ptA[3] || 0);
+          const tsB = Number(ptB[3] || 0);
+          const segmentMs = tsB > tsA ? tsB - tsA : 1000;
+          const progress = Math.max(0, Math.min(1, this._replayElapsedMs / segmentMs));
+          const lat = ptA[0] + (ptB[0] - ptA[0]) * progress;
+          const lon = ptA[1] + (ptB[1] - ptA[1]) * progress;
+          const speedA = Number(ptA[2] || 0);
+          const speed = speedA + (Number(ptB[2] || speedA) - speedA) * progress;
+          const angle = this._smoothRotation(this.getBearing(ptA[0], ptA[1], ptB[0], ptB[1]));
+          if (speedA > 0) this._marker.setIcon(this.getCarIcon(angle, speed));
+          this._marker.setLatLng([lat, lon]);
+          this._map.panTo([lat, lon], { animate: false });
 
-          const playbackMultiplier = 15.0; // tỉ lệ tăng tốc x15 thực tế
-
-          // Tiến dọc theo tọa độ theo khoảng cách thực
-          let remainingDist = dt * playbackMultiplier; // mét/giây thực * multiplier * dt
-          let ptA = coords[this._currentReplayIdx];
-          let speedKmh = (ptA[2] != null ? ptA[2] : 30);
-          if (speedKmh < 5) speedKmh = 5;
-          remainingDist = (speedKmh / 3.6) * playbackMultiplier * dt;
-
-          while (remainingDist > 0 && this._currentReplayIdx < coords.length - 1) {
-              ptA = coords[this._currentReplayIdx];
-              const ptB = coords[this._currentReplayIdx + 1];
-              const distAB = this.getDistanceFromLatLonInM(ptA[0], ptA[1], ptB[0], ptB[1]);
-              const remaining_on_segment = distAB * (1.0 - this._replayProgress);
-
-              if (distAB <= 0 || remainingDist >= remaining_on_segment) {
-                  // Vượt qua segment này, chuyển sang segment tiếp theo
-                  remainingDist -= remaining_on_segment;
-                  this._currentReplayIdx++;
-                  this._replayProgress = 0.0;
+          if (idx >= coords.length - 2 && progress >= 1) {
+              if (segmentIndex < segments.length - 1) {
+                  segmentIndex++;
+                  coords = segments[segmentIndex];
+                  this._currentReplaySegment = segmentIndex;
+                  this._currentReplayIdx = 0;
+                  this._replayElapsedMs = 0;
+                  const nextStart = coords[0];
+                  this._marker.setLatLng([nextStart[0], nextStart[1]]);
+                  this._map.panTo([nextStart[0], nextStart[1]], { animate: false });
               } else {
-                  // Nằm trong segment này
-                  this._replayProgress += remainingDist / distAB;
-                  remainingDist = 0;
+                  this._isReplaying = false; this._isPaused = false;
+                  iconReplay.setAttribute('icon', 'mdi:play-circle');
+                  if (this._selectedDateStr !== 'LIVE') setTimeout(() => this._marker.setOpacity(0), 2000);
+                  return;
               }
           }
-
-          // Render vị trí hiện tại
-          if (this._currentReplayIdx >= coords.length - 1) {
-              const finalPt = coords[coords.length - 1];
-              this._marker.setLatLng([finalPt[0], finalPt[1]]);
-              this._isReplaying = false; this._isPaused = false;
-              iconReplay.setAttribute('icon', 'mdi:play-circle');
-              if (this._selectedDateStr !== 'LIVE') setTimeout(() => this._marker.setOpacity(0), 2000);
-              return;
-          }
-
-          const curPtA = coords[this._currentReplayIdx];
-          const curPtB = coords[this._currentReplayIdx + 1];
-          const t = Math.max(0, Math.min(1, this._replayProgress));
-
-          const currentLat = curPtA[0] + (curPtB[0] - curPtA[0]) * t;
-          const currentLon = curPtA[1] + (curPtB[1] - curPtA[1]) * t;
-          const speedA = curPtA[2] != null ? curPtA[2] : 0;
-          const speedB = curPtB[2] != null ? curPtB[2] : speedA;
-          const currentSpeed = speedA + (speedB - speedA) * t;
-
-          const targetAngle = this.getBearing(curPtA[0], curPtA[1], curPtB[0], curPtB[1]);
-          const smoothedAngle = this._smoothRotation(targetAngle);
-
-          this._marker.setIcon(this.getCarIcon(smoothedAngle, currentSpeed));
-          this._marker.setLatLng([currentLat, currentLon]);
-          this._map.panTo([currentLat, currentLon], { animate: false });
-
           this._animationFrameId = requestAnimationFrame(this._runAnimation);
       };
       
@@ -2014,6 +2048,68 @@ class VinFastDigitalTwin extends HTMLElement {
 
     const statBadgeEl = this.querySelector('#vf-status-badge');
     if(statBadgeEl) statBadgeEl.innerText = statusText;
+    
+    // [dsh] Badge biển báo: cấm dừng / cấm đỗ + giới hạn tốc độ (VietMap + OSM)
+    const signItemEl = this.querySelector('#vf-sign-item');
+    if (signItemEl) {
+        const signStatus = getValidState('bien_bao_cam_dung_do');
+        const signDetail = getValidState('chi_tiet_bien_bao');
+        const speedLimit = getValidState('gioi_han_toc_do_tham_khao');
+        const bad = signStatus && !/^Chưa|^Lỗi|^Không/.test(String(signStatus));
+        if (bad) {
+            const noStop = String(signStatus).indexOf('Cấm dừng') === 0;
+            const iconEl = this.querySelector('#vf-sign-icon');
+            const txtEl = this.querySelector('#vf-sign-text');
+            if (iconEl) iconEl.setAttribute('icon', noStop ? 'mdi:parking-off' : 'mdi:parking');
+            let txt = (noStop ? '🚫 ' : '🅿️ ') + signStatus;
+            if (signDetail && String(signDetail).indexOf('Trái:') === 0) txt += ' (' + signDetail + ')';
+            if (speedLimit && /^\d+$/.test(String(speedLimit))) txt += ' · GH ' + speedLimit + ' km/h';
+            if (txtEl) txtEl.textContent = txt;
+            signItemEl.style.display = 'flex';
+            signItemEl.style.color = noStop ? '#dc2626' : '#f59e0b';
+        } else {
+            signItemEl.style.display = 'none';
+        }
+    }
+
+    // [dsh] Cảnh báo đoạn cấm PHÍA TRƯỚC + vẽ lên bản đồ
+    const nextM = getValidState('khoang_cach_bien_bao_toi');
+    const aheadRaw = getAttr('bien_bao_phia_truoc', 'blocks_json');
+    let aheadPts = [];
+    try {
+        const b = (typeof aheadRaw === 'string') ? JSON.parse(aheadRaw) : aheadRaw;
+        aheadPts = (b && b.points) || [];
+    } catch (e) { aheadPts = []; }
+    if (nextM && /^[0-9]+(\.[0-9]+)?$/.test(String(nextM)) && signItemEl) {
+        let worstAhead = 0;
+        aheadPts.forEach(p => { const t = Math.max(p.left || 0, p.right || 0); if (t > worstAhead) worstAhead = t; });
+        const txtEl2 = this.querySelector('#vf-sign-text');
+        const iconEl2 = this.querySelector('#vf-sign-icon');
+        if (iconEl2) iconEl2.setAttribute('icon', worstAhead === 2 ? 'mdi:parking-off' : 'mdi:parking');
+        if (txtEl2) txtEl2.textContent = (worstAhead === 2 ? '🚫 Cấm dừng & cấm đỗ' : '🅿️ Cấm đỗ') + ' cách ' + Math.round(nextM) + ' m';
+        signItemEl.style.display = 'flex';
+        signItemEl.style.color = '#dc2626';
+    }
+    if (this._signLayer && typeof L !== 'undefined') {
+        this._signLayer.clearLayers();
+        if (aheadPts.length) {
+            const linePts = [];
+            aheadPts.forEach(p => {
+                const t = Math.max(p.left || 0, p.right || 0);
+                const color = (t === 2) ? '#dc2626' : (t === 1 ? '#f59e0b' : '#94a3b8');
+                linePts.push([p.lat, p.lon]);
+                const cm = L.circleMarker([p.lat, p.lon], {
+                    radius: t > 0 ? 8 : 4, color: color, weight: 3,
+                    fillColor: color, fillOpacity: t > 0 ? 0.55 : 0.15, opacity: t > 0 ? 1 : 0.5
+                }).addTo(this._signLayer);
+                const label = (t === 2) ? '🚫 Cấm dừng & cấm đỗ' : (t === 1 ? '🅿️ Cấm đỗ' : 'Không hạn chế');
+                cm.bindPopup(label + ' · cách xe ' + p.dist + ' m' + (p.entry ? '<br>⛔ Đường cấm vào' : ''));
+            });
+            if (linePts.length > 1) {
+                L.polyline(linePts, { color: '#dc2626', weight: 3, opacity: 0.4, dashArray: '6 6' }).addTo(this._signLayer);
+            }
+        }
+    }
     
     const odoRaw = getValidState('tong_odo_mqtt') || getValidState('tong_odo');
     const odoEl = this.querySelector('#vf-odo-int');
@@ -2343,8 +2439,8 @@ class VinFastDigitalTwin extends HTMLElement {
                   this._currentPolylineString = routeJsonStr;
                   let parsedData = this.safeParseJSON(routeJsonStr);
                   this._rawRouteCoords = this.cleanRouteData(parsedData);
-                  const latLngsOnly = this._rawRouteCoords.map(p => [p[0], p[1]]);
-                  this._polyline.setLatLngs(latLngsOnly);
+                  const gapSegments = this._splitRouteByGap(this._rawRouteCoords);
+                  this._polyline.setLatLngs(gapSegments.map(seg => seg.map(p => [p[0], p[1]])));
               }
           }
       }
@@ -2381,6 +2477,8 @@ class VinFastDigitalTwin extends HTMLElement {
             'odo_cuoi_ky_thue_pin', 'km_di_trong_ky_thue_pin', 'phien_ban_t_box_sota', 'co_thong_bao_chua_doc'].map(getValidState).join('|');
         if (healthSig !== this._healthSig) { this._healthSig = healthSig; this.renderHealthPanel(); }
     }
+
+    if (this._routePlan && this._refreshNextLeg) this._refreshNextLeg();
 
     this.updateDynamicTripStats();
   }
@@ -2608,6 +2706,638 @@ class VinFastDigitalTwin extends HTMLElement {
     }
   }
 // Kết thúc khối.
+
+  // =====================================================================
+  // KHỐI: LỘ TRÌNH - DẪN ĐƯỜNG - TRẠM SẠC TRÊN TUYẾN - QUÃNG ĐƯỜNG CÒN LẠI
+  // =====================================================================
+  _sensorVal(suffix) {
+      const p = this._entityPrefix;
+      if (!p || !this._hass) return null;
+      const s = this._hass.states[`sensor.${p}_${suffix}`];
+      if (!s) return null;
+      const v = s.state;
+      if (v === undefined || v === null || v === '' || v === 'unknown' || v === 'unavailable' || v === '--') return null;
+      return v;
+  }
+
+  _sensorNum(suffix) {
+      const n = parseFloat(this._sensorVal(suffix));
+      return Number.isFinite(n) ? n : null;
+  }
+
+  // Thông tin pin/phạm vi dùng cho bài toán lộ trình
+  _rangeInfo() {
+      const soc = this._sensorNum('phan_tram_pin');
+      const cap = this._sensorNum('dung_luong_pin_thiet_ke') || 0;
+      let range = this._sensorNum('quang_duong_du_kien');
+      if (range === null || range <= 0) range = this._sensorNum('quang_duong_con_lai_thich_ung');
+      if (range === null || range <= 0) {
+          const full = this._sensorNum('quang_duong_thuc_te_day_100_pin') || this._sensorNum('quang_duong_cong_bo_max');
+          if (full && soc) range = full * soc / 100;
+      }
+      const kmPerPct = (range && soc) ? range / soc : null;
+      return { soc, cap, range: (range === null || range <= 0) ? null : range, kmPerPct };
+  }
+
+  _carLatLng() {
+      if (this._lastLat && this._lastLon) return [this._lastLat, this._lastLon];
+      const t = (this._hass && this._entityPrefix) ? this._hass.states[`device_tracker.${this._entityPrefix}_vi_tri_gps`] : null;
+      const lat = parseFloat(t?.attributes?.latitude ?? this._sensorVal('vi_do_latitude'));
+      const lon = parseFloat(t?.attributes?.longitude ?? this._sensorVal('kinh_do_longitude'));
+      return (Number.isFinite(lat) && Number.isFinite(lon) && lat && lon) ? [lat, lon] : null;
+  }
+
+  _initRoutePlannerUI() {
+      const btnPlan = this.querySelector('#btn-route-plan');
+      const panel = this.querySelector('#vf-route-panel');
+      if (!btnPlan || !panel) return;
+      const input = this.querySelector('#vf-route-input');
+      const statusEl = this.querySelector('#vf-route-status');
+
+      this._setRouteStatus = (msg, color) => {
+          if (!statusEl) return;
+          if (!msg) { statusEl.style.display = 'none'; return; }
+          statusEl.style.display = 'block';
+          statusEl.style.color = color || '#64748b';
+          statusEl.innerHTML = msg;
+      };
+
+      this._toggleRoutePanel = (open) => {
+          const isOpen = (open === undefined) ? panel.style.display !== 'block' : !!open;
+          panel.style.display = isOpen ? 'block' : 'none';
+          btnPlan.style.color = isOpen ? '#2563eb' : '';
+          if (!isOpen) this._setPickMode(false);
+      };
+
+      this._onMapPick = async (e) => {
+          if (!this._pickDestMode) return;
+          this._setPickMode(false);
+          const lat = e.latlng.lat, lng = e.latlng.lng;
+          if (input) input.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          this._setRouteStatus('Đang lấy địa chỉ điểm đến...');
+          const addr = await this.getAddressFromCoords(lat, lng);
+          this._routeDest = { lat, lng, name: addr };
+          this._setRouteStatus(`Điểm đến: ${addr}`);
+          this.calculateRoutePlan();
+      };
+
+      btnPlan.onclick = () => {
+          if (this._selectedDateStr !== 'LIVE') return;
+          this._toggleRoutePanel();
+      };
+      const btnClose = this.querySelector('#btn-route-close');
+      if (btnClose) btnClose.onclick = () => this._toggleRoutePanel(false);
+      const btnPick = this.querySelector('#btn-route-pick');
+      if (btnPick) btnPick.onclick = () => this._setPickMode(!this._pickDestMode);
+      const btnGo = this.querySelector('#btn-route-go');
+      if (btnGo) btnGo.onclick = () => this.calculateRoutePlan();
+      if (input) input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.calculateRoutePlan(); } };
+  }
+
+  _setPickMode(on) {
+      this._pickDestMode = !!on;
+      const btnPick = this.querySelector('#btn-route-pick');
+      const mapEl = this.querySelector('#vf-map-canvas');
+      if (btnPick) {
+          btnPick.style.background = this._pickDestMode ? '#2563eb' : '#f1f5f9';
+          btnPick.style.color = this._pickDestMode ? 'white' : '#334155';
+          btnPick.innerText = this._pickDestMode ? 'Chạm lên bản đồ...' : 'Chọn trên bản đồ';
+      }
+      if (mapEl) mapEl.style.cursor = this._pickDestMode ? 'crosshair' : '';
+      if (this._map) {
+          if (this._pickDestMode && !this._mapClickBound) { this._map.on('click', this._onMapPick); this._mapClickBound = true; }
+          else if (!this._pickDestMode && this._mapClickBound) { this._map.off('click', this._onMapPick); this._mapClickBound = false; }
+      }
+  }
+
+  _parseCoord(s) {
+      const m = String(s || '').trim().match(/^(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/);
+      if (!m) return null;
+      const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+      return (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) ? [lat, lng] : null;
+  }
+
+  // Nhận diện: toạ độ thô / địa chỉ / link Google Maps (kể cả link có waypoints)
+  // Trả về { origin, dest, waypoints, query }: origin có khi link tự chứa điểm xuất phát (link lộ trình /dir/)
+  _parseGmapsText(text) {
+      const t = String(text || '').trim();
+      if (!t) return null;
+      if (!/^https?:\/\//i.test(t)) {
+          const c = this._parseCoord(t);
+          return { origin: null, dest: c ? { lat: c[0], lng: c[1], name: null } : null, waypoints: [], query: c ? null : t };
+      }
+      const out = { origin: null, dest: null, waypoints: [], query: null };
+      const d3 = t.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+      if (d3) out.dest = { lat: parseFloat(d3[1]), lng: parseFloat(d3[2]), name: null };
+
+      const dir = t.match(/\/dir\/([^?]+)/);
+      if (dir) {
+          const pts = decodeURIComponent(dir[1]).split('/').filter(Boolean).map(s => this._parseCoord(s)).filter(Boolean);
+          if (pts.length >= 2) {
+              out.origin = { lat: pts[0][0], lng: pts[0][1], name: null };
+              if (!out.dest) out.dest = { lat: pts[pts.length - 1][0], lng: pts[pts.length - 1][1], name: null };
+              out.waypoints = pts.slice(1, -1).map(p => ({ lat: p[0], lng: p[1], name: null }));
+          } else if (pts.length === 1 && !out.dest) {
+              out.dest = { lat: pts[0][0], lng: pts[0][1], name: null };
+          }
+      }
+      const org = t.match(/[?&]origin=([^&]+)/);
+      if (org) {
+          const c = this._parseCoord(decodeURIComponent(org[1].replace(/\+/g, ' ')));
+          if (c) out.origin = { lat: c[0], lng: c[1], name: null };
+      }
+      const wp = t.match(/[?&]waypoints=([^&]+)/);
+      if (wp) {
+          const list = decodeURIComponent(wp[1]).split('|').map(s => this._parseCoord(s)).filter(Boolean);
+          if (list.length) out.waypoints = list.map(p => ({ lat: p[0], lng: p[1], name: null }));
+      }
+      if (!out.dest) {
+          const qs = t.match(/[?&](?:destination|daddr|q|query|ll)=([^&]+)/);
+          if (qs) {
+              const v = decodeURIComponent(qs[1].replace(/\+/g, ' '));
+              const c = this._parseCoord(v);
+              if (c) out.dest = { lat: c[0], lng: c[1], name: null };
+              else out.query = v;
+          }
+      }
+      if (!out.dest) {
+          const at = t.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+          if (at) out.dest = { lat: parseFloat(at[1]), lng: parseFloat(at[2]), name: null };
+      }
+      if (!out.dest && !out.query) out.query = t;
+      return out;
+  }
+
+  // Link chia sẻ dạng rút gọn (maps.app.goo.gl) -> mở qua backend để lấy URL đầy đủ
+  async _resolveShortLink(url) {
+      if (!/(maps\.app\.goo\.gl|goo\.gl\/maps)/i.test(url)) return url;
+      if (!this._hass) return url;
+      try {
+          const res = await this._hass.callApi('GET', `vinfast/resolve_url?u=${encodeURIComponent(url)}`);
+          return (res && res.url) ? res.url : url;
+      } catch (e) { return url; }
+  }
+
+  async _geocodeText(q) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=vi&q=${encodeURIComponent(q)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Geocode HTTP ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data) || !data.length) throw new Error('Không tìm thấy địa điểm');
+      return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), name: data[0].display_name || q };
+  }
+
+  _cumulativeKm(coords) {
+      const cum = [0];
+      for (let i = 1; i < coords.length; i++) {
+          cum.push(cum[i - 1] + this.getDistanceFromLatLonInM(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1]) / 1000);
+      }
+      return cum;
+  }
+
+  async _fetchOsrmRoute(points) {
+      // Nhiều máy chủ định tuyến OSRM (cùng API) để tự chuyển khi máy chủ demo bị chặn/timeout
+      const endpoints = [
+          'https://routing.openstreetmap.de/routed-car/route/v1/driving',
+          'https://router.project-osrm.org/route/v1/driving'
+      ];
+      const path = points.map(p => `${p.lng},${p.lat}`).join(';');
+      let lastErr = null;
+      for (const base of endpoints) {
+          try {
+              const ctrl = new AbortController();
+              const timer = setTimeout(() => ctrl.abort(), 15000);
+              const res = await fetch(`${base}/${path}?overview=full&geometries=geojson&steps=false&alternatives=false`, { signal: ctrl.signal });
+              clearTimeout(timer);
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              const data = await res.json();
+              const r = data && data.routes && data.routes[0];
+              if (!r || !r.geometry || !Array.isArray(r.geometry.coordinates)) throw new Error('Không có dữ liệu tuyến');
+              const coords = r.geometry.coordinates.map(c => [c[1], c[0]]);
+              return { km: r.distance / 1000, mins: r.duration / 60, coords, cum: this._cumulativeKm(coords) };
+          } catch (e) {
+              lastErr = e;
+          }
+      }
+      throw new Error(`Không lấy được lộ trình (${lastErr && lastErr.message ? lastErr.message : lastErr})`);
+  }
+
+  // Lấy trạm sạc dọc tuyến: lấy mẫu điểm trên tuyến rồi hỏi backend
+  async _fetchStationsAlong(coords, cum) {
+      const total = cum[cum.length - 1];
+      const maxPts = 32;
+      // Mỗi điểm mẫu chỉ trả về ~20 trạm gần nhất: lấy mẫu dày (>=10 km) nhưng phải trải đều hết tuyến,
+      // nếu không tuyến dài sẽ chỉ dò được đoạn đầu (lỗi cũ: kẹp 17 km -> hết trạm sau ~540 km)
+      const stepKm = Math.max(10, total / (maxPts - 1));
+      const pts = [];
+      let i = 0;
+      for (let d = 0; d <= total && pts.length < maxPts; d += stepKm) {
+          while (i < cum.length - 1 && cum[i] < d) i++;
+          pts.push(coords[i]);
+      }
+      if (!pts.length) pts.push(coords[0]);
+      const q = pts.map(p => `${p[0].toFixed(4)},${p[1].toFixed(4)}`).join(';');
+      const res = await this._hass.callApi('GET', `vinfast/stations_along?points=${encodeURIComponent(q)}`);
+      return (Array.isArray(res) ? res : []).filter(s => s && Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lng)));
+  }
+
+  // Tìm vị trí gần nhất trên tuyến: trả về km dọc tuyến và độ lệch so với tuyến
+  _nearestRoute(lat, lng, coords, cum) {
+      let best = Infinity, km = 0;
+      for (let i = 0; i < coords.length; i++) {
+          const d = this.getDistanceFromLatLonInM(lat, lng, coords[i][0], coords[i][1]) / 1000;
+          if (d < best) { best = d; km = cum[i]; }
+      }
+      return { detour: best, km };
+  }
+
+  // Gắn "km dọc tuyến" + độ lệch tuyến cho từng trạm
+  _annotateStations(stations, coords, cum) {
+      const out = [];
+      for (const s of stations) {
+          const lat = Number(s.lat), lng = Number(s.lng);
+          const near = this._nearestRoute(lat, lng, coords, cum);
+          if (near.detour <= 6) out.push(Object.assign({}, s, { lat, lng, detour: near.detour, km: near.km }));
+      }
+      return out.sort((a, b) => a.km - b.km);
+  }
+
+  // Bài toán chọn điểm dừng sạc cho lộ trình dài:
+  //  - Chia nhỏ lộ trình: mỗi chặng chỉ dùng ~75% quãng đường dự kiến (70-80%)
+  //  - Tới trạm dự kiến còn ~20% pin
+  //  - Mỗi lần sạc lên 85% (trong khoảng 80-90%), riêng chặng cuối sạc vừa đủ tới đích
+  //  - Hết mỗi chặng lại tự tính trạm kế tiếp cho tới khi phủ hết lộ trình
+  _solveChargingStops(totalKm, info, stations) {
+      const soc0 = info.soc, kmPerPct = info.kmPerPct, cap = info.cap;
+      const LEG_FRAC = 0.75;      // dùng 75% quãng đường dự kiến cho mỗi chặng
+      const ARRIVE_SOC = 20;      // tới trạm còn ~20% pin
+      const CHARGE_TARGET = 85;   // sạc mỗi lần tới 85%
+      const CHARGE_MAX = 90;      // trần sạc cho phép
+      // Quãng đường đi được của một chặng, tính theo % pin hiện có
+      const legPctAt = (soc) => (soc > ARRIVE_SOC + 7 ? Math.min(soc * LEG_FRAC, soc - ARRIVE_SOC) : soc * LEG_FRAC);
+      const reachAt = (soc) => Math.max(0, legPctAt(soc)) * kmPerPct;
+      const stops = [];
+      let pos = 0, socNow = soc0, guard = 0;
+      // Số điểm dừng tối đa suy ra từ độ dài tuyến (lỗi cũ: kẹp cứng 10 -> tuyến >1400 km không phủ hết)
+      const maxStops = Math.ceil(totalKm / Math.max(20, reachAt(CHARGE_TARGET) * 0.5)) + 3;
+
+      while ((totalKm - pos) > reachAt(socNow) && guard++ < maxStops) {
+          const reach = reachAt(socNow);
+          const lo = pos + reach * 0.3;
+          const hi = pos + reach;
+          // Ưu tiên trạm ở cuối chặng; nếu không có thì nhận trạm gần hơn, cuối cùng nới tới giới hạn pin
+          let cand = stations.filter(s => s.km > lo && s.km <= hi);
+          if (!cand.length) cand = stations.filter(s => s.km > pos && s.km <= hi);
+          if (!cand.length) cand = stations.filter(s => s.km > pos && s.km <= pos + socNow * kmPerPct * 0.98);
+          if (!cand.length) break;
+          const pick = cand.map(s => ({
+              s,
+              score: (s.km - pos) / Math.max(reach, 1) * 40
+                   - s.detour * 6
+                   + (s.power >= 20 ? 10 : 0)
+                   + (s.power >= 60 ? 5 : 0)
+                   + (s.avail > 0 ? 8 : -15)
+          })).sort((a, b) => b.score - a.score)[0].s;
+
+          const arriveSoc = Math.max(0, socNow - (pick.km - pos) / kmPerPct);
+          const remain = totalKm - pick.km;
+          let chargeTo = CHARGE_TARGET;
+          if (remain <= reachAt(CHARGE_MAX)) {
+              const need = ARRIVE_SOC + remain / kmPerPct;   // vừa đủ tới đích với ~20% pin
+              chargeTo = Math.min(CHARGE_MAX, Math.max(Math.ceil(arriveSoc) + 5, Math.ceil(need)));
+              // Đảm bảo chặng cuối thực sự phủ được quãng đường còn lại
+              if (reachAt(chargeTo) < remain) chargeTo = Math.min(CHARGE_MAX, Math.ceil(remain / (LEG_FRAC * kmPerPct)));
+          }
+          const kwh = Math.max(0, (chargeTo - arriveSoc) / 100 * cap);
+          const effKw = Math.min(pick.power || 11, 60) * 0.85;
+          stops.push(Object.assign({}, pick, {
+              arriveSoc, chargeTo, kwh, legKm: pick.km - pos,
+              minutes: effKw > 0 ? Math.round(kwh / effKw * 60) : null
+          }));
+          pos = pick.km;
+          socNow = chargeTo;
+      }
+      const reachLeft = reachAt(socNow);
+      const covered = (totalKm - pos) <= reachLeft + 0.5;
+      const socArrival = Math.max(0, socNow - (totalKm - pos) / kmPerPct);
+      return { stops, covered, socArrival, reachLeft };
+  }
+
+  // Điểm có nằm trong Việt Nam không (ray casting trên bảng biên giới)
+  _inVietnam(lat, lng) {
+      let hit = false;
+      for (let i = 0, j = VN_BORDER.length - 1; i < VN_BORDER.length; j = i++) {
+          const yi = VN_BORDER[i][0], xi = VN_BORDER[i][1], yj = VN_BORDER[j][0], xj = VN_BORDER[j][1];
+          if ((xi > lng) !== (xj > lng) && lat < (yj - yi) * (lng - xi) / (xj - xi) + yi) hit = !hit;
+      }
+      return hit;
+  }
+
+  // Lộ trình có đoạn nào ra ngoài Việt Nam không (lấy mẫu mỗi ~25 km)
+  _routeLeavesVN(coords, cum) {
+      if (!coords || !coords.length) return false;
+      let next = 0;
+      for (let i = 0; i < coords.length; i++) {
+          if (cum[i] >= next || i === coords.length - 1) {
+              if (!this._inVietnam(coords[i][0], coords[i][1])) return true;
+              next = cum[i] + 25;
+          }
+      }
+      return false;
+  }
+
+  // Vị trí tương đối của điểm P trên đoạn thẳng A->B (0 = A, 1 = B) và khoảng cách lệch khỏi đoạn
+  _progressT(a, b, p) {
+      const straight = this.getDistanceFromLatLonInM(a.lat, a.lng, b.lat, b.lng) / 1000;
+      if (!straight) return 0;
+      const dA = this.getDistanceFromLatLonInM(a.lat, a.lng, p.lat, p.lng) / 1000;
+      const dB = this.getDistanceFromLatLonInM(p.lat, p.lng, b.lat, b.lng) / 1000;
+      const t = (dA * dA + straight * straight - dB * dB) / (2 * straight * straight);
+      const s = t * straight;
+      return { t, perp: Math.sqrt(Math.max(0, dA * dA - s * s)) };
+  }
+
+  // Thành phố mốc trên quốc lộ chính: dùng để neo lộ trình trong Việt Nam
+  _vnAnchors(a, b) {
+      const cities = [
+          ['Điện Biên', 21.39, 103.02], ['Sơn La', 21.33, 103.91], ['Lào Cai', 22.48, 103.97], ['Hà Giang', 22.82, 104.98],
+          ['Hà Nội', 21.03, 105.85], ['Ninh Bình', 20.25, 105.97], ['Thanh Hóa', 19.81, 105.78], ['Vinh', 18.68, 105.68],
+          ['Hà Tĩnh', 18.34, 105.90], ['Đồng Hới', 17.47, 106.60], ['Đông Hà', 16.82, 107.10], ['Huế', 16.46, 107.60],
+          ['Đà Nẵng', 16.05, 108.22], ['Tam Kỳ', 15.57, 108.47], ['Quảng Ngãi', 15.12, 108.80], ['Quy Nhơn', 13.78, 109.22],
+          ['Nha Trang', 12.24, 109.19], ['Phan Rang', 11.57, 108.99], ['Phan Thiết', 10.93, 108.10], ['Vũng Tàu', 10.35, 107.08],
+          ['Đà Lạt', 11.94, 108.44], ['Buôn Ma Thuột', 12.68, 108.05], ['Pleiku', 13.98, 108.00], ['Kon Tum', 14.35, 108.00],
+          ['Đồng Xoài', 11.53, 106.90], ['Tây Ninh', 11.36, 106.13], ['Biên Hòa', 10.95, 106.82], ['TP.HCM', 10.78, 106.70],
+          ['Mỹ Tho', 10.36, 106.36], ['Cần Thơ', 10.03, 105.78], ['Rạch Giá', 10.01, 105.08], ['Cà Mau', 9.18, 105.15]
+      ];
+      const straight = this.getDistanceFromLatLonInM(a.lat, a.lng, b.lat, b.lng) / 1000;
+      if (straight < 250) return [];
+      const picks = [];
+      for (const [name, lat, lng] of cities) {
+          const g = this._progressT(a, b, { lat, lng });
+          if (g.t < 0.1 || g.t > 0.9 || g.perp > 300) continue;
+          picks.push({ name, lat, lng, t: g.t });
+      }
+      picks.sort((x, y) => x.t - y.t);
+      if (picks.length <= 3) return picks;
+      const step = picks.length / 3;
+      return [picks[Math.floor(step * 0.5)], picks[Math.floor(step * 1.5)], picks[Math.min(picks.length - 1, Math.floor(step * 2.5))]];
+  }
+
+  // Lấy lộ trình; nếu tuyến đi qua nước khác thì neo lại qua các thành phố Việt Nam rồi tính lại
+  async _fetchRouteInVN(points) {
+      const route = await this._fetchOsrmRoute(points);
+      if (!this._routeLeavesVN(route.coords, route.cum)) return { route, anchored: false, outside: false };
+      const a = points[0], b = points[points.length - 1];
+      const anchors = this._vnAnchors(a, b);
+      if (!anchors.length) return { route, anchored: false, outside: true };
+      // trộn điểm neo với các điểm qua của người dùng theo đúng thứ tự tiến độ
+      const middle = anchors.concat(points.slice(1, -1).map(p => Object.assign({ t: this._progressT(a, b, p).t }, p)));
+      middle.sort((x, y) => x.t - y.t);
+      try {
+          const r2 = await this._fetchOsrmRoute([a].concat(middle, [b]));
+          if (!this._routeLeavesVN(r2.coords, r2.cum)) return { route: r2, anchored: true, outside: false, anchors };
+      } catch (e) { /* giữ tuyến ban đầu */ }
+      return { route, anchored: false, outside: true, anchors };
+  }
+
+  // Chặng nhỏ còn lại: từ vị trí xe hiện tại tới trạm sạc kế tiếp (hoặc tới đích)
+  _nextLeg() {
+      const plan = this._routePlan;
+      const geo = this._routeGeo;
+      const pos = this._carLatLng();
+      if (!plan || !geo || !pos) return null;
+      const near = this._nearestRoute(pos[0], pos[1], geo.coords, geo.cum);
+      if (near.detour > 25) return null;                                   // xe không còn trên tuyến đã tính
+      if (near.km > plan.km - 0.5) return null;                            // đã tới đích
+      const stop = plan.stops.find(s => s.km > near.km + 0.5) || null;
+      const target = stop || plan.dest;
+      const kmLeft = (stop ? stop.km : plan.km) - near.km;
+      const info = this._rangeInfo();
+      const socNow = info.soc !== null ? info.soc : plan.info.soc;
+      const socAt = info.kmPerPct ? Math.max(0, socNow - kmLeft / info.kmPerPct) : null;
+      const label = stop ? `${stop.name} (⚡ ${stop.power} kW, trống ${stop.avail}/${stop.total})` : (plan.dest.name || 'Điểm đến');
+      return {
+          stop, kmLeft, socAt, label,
+          url: this._gmapsUrl({ lat: pos[0], lng: pos[1] }, target, [])
+      };
+  }
+
+  // Cập nhật dòng "chặng kế tiếp" khi xe chạy/sạc (chỉ vẽ lại khi vị trí hoặc pin đổi đủ nhiều)
+  _refreshNextLeg() {
+      const el = this.querySelector('#vf-route-next');
+      if (!el || !this._routePlan) return;
+      const pos = this._carLatLng();
+      const posKey = pos ? `${pos[0].toFixed(4)},${pos[1].toFixed(4)},${this._rangeInfo().soc}` : 'none';
+      if (posKey === this._lastLegPosKey) return;         // xe chưa đổi vị trí/pin: khỏi quét lại toàn tuyến
+      this._lastLegPosKey = posKey;
+      const leg = this._nextLeg();
+      if (!leg) { el.innerHTML = ''; return; }
+      const key = `${leg.kmLeft.toFixed(0)}|${leg.socAt === null ? '-' : Math.round(leg.socAt)}|${leg.stop ? leg.stop.name : 'dest'}`;
+      if (key === this._lastLegKey) return;
+      this._lastLegKey = key;
+      const f1 = (v) => Number.isFinite(v) ? v.toFixed(1) : '--';
+      const warn = leg.socAt !== null && leg.socAt < 10;
+      el.innerHTML = `
+          <div style="margin-top:8px; border:1px solid ${warn ? '#fca5a5' : '#bfdbfe'}; background:${warn ? '#fef2f2' : '#eff6ff'}; border-radius:8px; padding:8px;">
+              <div style="font-size:10px; color:#64748b; text-transform:uppercase; letter-spacing:.5px;">Chặng kế tiếp</div>
+              <div style="font-size:11px; font-weight:bold; color:#1e3a8a; margin-top:2px;">${leg.stop ? 'Trạm sạc: ' : 'Tới đích: '}${leg.label}</div>
+              <div style="font-size:10px; color:#475569; margin-top:2px;">Còn ${f1(leg.kmLeft)} km${leg.socAt !== null ? ` • dự kiến tới nơi còn ~${Math.round(leg.socAt)}% pin` : ''}</div>
+              <a href="${leg.url}" target="_blank" style="display:flex; align-items:center; justify-content:center; gap:4px; margin-top:6px; background:${warn ? '#dc2626' : '#0ea5e9'}; color:white; padding:6px; border-radius:6px; text-decoration:none; font-weight:bold; font-size:11px;">
+                  <ha-icon icon="mdi:navigation-variant" style="--mdc-icon-size:13px;"></ha-icon> ${leg.stop ? 'Dẫn tới trạm kế tiếp' : 'Dẫn tới điểm đến'}
+              </a>
+          </div>`;
+  }
+
+  async calculateRoutePlan() {
+      if (this._routeBusy) return;
+      const input = this.querySelector('#vf-route-input');
+      const info = this._rangeInfo();
+      if (info.range === null || info.soc === null) { this._setRouteStatus('Chưa có dữ liệu pin/phạm vi của xe.', '#dc2626'); return; }
+      const text = input ? input.value.trim() : '';
+      if (!text) { this._setRouteStatus('Nhập điểm đến hoặc chạm lên bản đồ để chọn.', '#dc2626'); return; }
+
+      this._routeBusy = true;
+      const btnGo = this.querySelector('#btn-route-go');
+      if (btnGo) { btnGo.disabled = true; btnGo.innerText = 'Đang tính...'; }
+      let origin = this._carLatLng();
+      try {
+          this._setRouteStatus('Đang phân tích điểm đến...');
+          let parsed = this._parseGmapsText(text);
+          if (parsed && parsed.query && /^https?:\/\//i.test(parsed.query)) {
+              this._setRouteStatus('Đang mở link chia sẻ Google Maps...');
+              parsed = this._parseGmapsText(await this._resolveShortLink(parsed.query));
+          }
+          if (parsed && parsed.query && !parsed.dest) {
+              this._setRouteStatus('Đang tìm địa chỉ...');
+              parsed.dest = await this._geocodeText(parsed.query);
+          }
+          if (!parsed || !parsed.dest) { this._setRouteStatus('Không xác định được điểm đến. Kiểm tra lại link/địa chỉ.', '#dc2626'); return; }
+          this._routeDest = parsed.dest;
+
+          // Link lộ trình /dir/ có sẵn điểm xuất phát -> đi đúng theo lộ trình Google đã chia sẻ
+          let originLabel = 'vị trí xe';
+          if (parsed.origin) {
+              origin = [parsed.origin.lat, parsed.origin.lng];
+              originLabel = 'điểm đầu của link';
+          }
+          if (!origin) { this._setRouteStatus('Chưa xác định được vị trí xe và link không có điểm xuất phát.', '#dc2626'); return; }
+
+          const via = (parsed.waypoints || []).slice(0, 8);
+          const points = [{ lat: origin[0], lng: origin[1] }].concat(via, [parsed.dest]);
+          this._setRouteStatus('Đang lấy lộ trình...');
+          const got = await this._fetchRouteInVN(points);
+          const route = got.route;
+          this._routeGeo = route;
+          const anchors = (got.anchors || []).map(a => Object.assign({ anchor: true }, a));
+          const viaKm = via.concat(anchors).map(v => Object.assign({}, v, this._nearestRoute(v.lat, v.lng, route.coords, route.cum)));
+
+          let stations = [];
+          this._setRouteStatus('Đang dò trạm sạc trên tuyến...');
+          try {
+              stations = this._annotateStations(await this._fetchStationsAlong(route.coords, route.cum), route.coords, route.cum);
+          } catch (e) { stations = []; }
+
+          const solved = this._solveChargingStops(route.km, info, stations);
+          this._routePlan = {
+              km: route.km, mins: route.mins, dest: parsed.dest, via: viaKm, originLabel,
+              anchored: got.anchored, outside: got.outside,
+              stops: solved.stops, covered: solved.covered, socArrival: solved.socArrival,
+              info, origin, stationCount: stations.length
+          };
+          this._drawRoutePlan();
+          this._renderRoutePlan();
+          this._setRouteStatus(null);
+      } catch (e) {
+          this._setRouteStatus(`Lỗi tính lộ trình: ${e && e.message ? e.message : e}`, '#dc2626');
+      } finally {
+          this._routeBusy = false;
+          if (btnGo) { btnGo.disabled = false; btnGo.innerText = 'Tính lộ trình'; }
+      }
+  }
+
+  _gmapsUrl(origin, dest, viaPoints) {
+      const fmt = (p) => `${Number(p.lat).toFixed(6)},${Number(p.lng).toFixed(6)}`;
+      let url = `https://www.google.com/maps/dir/?api=1&origin=${fmt(origin)}&destination=${fmt(dest)}&travelmode=driving`;
+      const seen = new Set();
+      const wps = (viaPoints || []).filter(p => {
+          if (!p) return false;
+          const k = fmt(p);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+      });
+      if (wps.length) url += `&waypoints=${wps.map(fmt).join('%7C')}`;
+      return url;
+  }
+
+  _drawRoutePlan() {
+      if (!this._map || typeof L === 'undefined' || !this._routeLayer) return;
+      this._routeLayer.clearLayers();
+      const plan = this._routePlan;
+      if (!plan || !this._routeGeo) return;
+      const line = this._routeGeo.coords;
+      L.polyline(line, { color: '#7c3aed', weight: 5, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }).addTo(this._routeLayer);
+      L.marker([plan.dest.lat, plan.dest.lng], {
+          icon: L.divIcon({
+              className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+              html: `<div style="background:#dc2626; color:white; border:2px solid white; border-radius:50%; width:26px; height:26px; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 6px rgba(0,0,0,0.3);"><ha-icon icon="mdi:flag-checkered" style="--mdc-icon-size:16px;"></ha-icon></div>`
+          })
+      }).bindPopup(`<b>Điểm đến</b><br>${plan.dest.name || `${plan.dest.lat.toFixed(5)}, ${plan.dest.lng.toFixed(5)}`}`).addTo(this._routeLayer);
+
+      (plan.via || []).forEach((v, i) => {
+          L.circleMarker([v.lat, v.lng], { radius: 5, color: '#2563eb', fillColor: '#ffffff', fillOpacity: 1, weight: 2 })
+              .bindPopup(`Điểm qua ${i + 1} (theo link Google Maps)`).addTo(this._routeLayer);
+      });
+
+      plan.stops.forEach((s, i) => {
+          L.marker([s.lat, s.lng], {
+              icon: L.divIcon({
+                  className: '', iconSize: [24, 24], iconAnchor: [12, 12],
+                  html: `<div style="background:#f59e0b; color:white; border:2px solid white; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:bold; box-shadow:0 3px 6px rgba(0,0,0,0.3);">${i + 1}</div>`
+              })
+          }).bindPopup(`<b>${i + 1}. ${s.name}</b><br>⚡ ${s.power} kW • Trống ${s.avail}/${s.total}<br>🔋 Tới trạm ~${Math.round(s.arriveSoc)}% → sạc lên ${s.chargeTo}%<br><a href="${this._gmapsUrl({ lat: s.lat, lng: s.lng }, plan.dest, [])}" target="_blank">Chỉ đường tới trạm</a>`).addTo(this._routeLayer);
+      });
+      try { this._map.fitBounds(L.latLngBounds(line), { padding: [30, 30] }); } catch (e) { /* bỏ qua */ }
+  }
+
+  _renderRoutePlan() {
+      const el = this.querySelector('#vf-route-result');
+      const plan = this._routePlan;
+      if (!el || !plan) return;
+      const f1 = (v) => Number.isFinite(v) ? v.toFixed(1) : '--';
+      const socArrival = plan.socArrival !== undefined ? plan.socArrival : (plan.info.kmPerPct
+          ? plan.info.soc - plan.km / plan.info.kmPerPct
+          : null);
+      const enough = plan.covered !== false && plan.stops.length === 0;
+      const verdictColor = enough ? '#16a34a' : (plan.covered === false ? '#dc2626' : '#f59e0b');
+      const verdictText = enough
+          ? `Đủ pin để tới nơi — dự kiến còn ~${Math.max(0, Math.round(socArrival))}% (~${f1(Math.max(0, plan.info.range - plan.km))} km)`
+          : (plan.covered === false
+              ? `Không đủ pin và chưa tìm được trạm sạc phù hợp trên tuyến — cần chia chặng hoặc sạc đầy trước khi đi`
+              : `Không đủ pin — chia lộ trình thành ${plan.stops.length} chặng, tới trạm dự kiến còn ~20% pin`);
+
+      const stopRows = plan.stops.map((s, i) => `
+          <div style="border-top:1px dashed var(--divider-color, #e2e8f0); padding:6px 0;">
+            <div style="display:flex; justify-content:space-between; gap:6px;">
+              <b style="font-size:11px; color:var(--primary-text-color, #1e3a8a);">${i + 1}. ${s.name}</b>
+              <span style="font-size:10px; color:#64748b; white-space:nowrap;">${f1(s.km)} km (chặng ${f1(s.legKm)} km)</span>
+            </div>
+            <div style="font-size:10px; color:var(--secondary-text-color, #475569); margin-top:2px; line-height:1.5;">
+              ⚡ ${s.power} kW (${s.details || '--'}) • Trống ${s.avail}/${s.total} • Lệch tuyến ${f1(s.detour)} km<br>
+              🔋 Tới trạm ~${Math.round(s.arriveSoc)}% → sạc lên ${s.chargeTo}%${s.minutes !== null ? ` (~${s.minutes} phút, ${f1(s.kwh)} kWh)` : ''}
+            </div>
+          </div>`).join('');
+
+      const wps = (plan.via || []).concat(plan.stops).sort((a, b) => a.km - b.km);
+      const btnUrl = this._gmapsUrl({ lat: plan.origin[0], lng: plan.origin[1] }, plan.dest, wps);
+      const routeNote = plan.anchored
+          ? `<div style="font-size:10px; color:#0369a1; margin-top:2px;">Đã neo lộ trình qua ${plan.via.filter(v => v.anchor).map(v => v.name).join(' → ') || 'quốc lộ Việt Nam'} để không đi qua Lào/Campuchia</div>`
+          : (plan.outside ? `<div style="font-size:10px; color:#b45309; margin-top:2px;">Lộ trình có đoạn ra ngoài Việt Nam — kiểm tra lại điểm dừng trước khi đi</div>` : '');
+
+      el.style.display = 'block';
+      el.innerHTML = `
+          <div style="display:flex; gap:8px; font-size:11px; color:var(--secondary-text-color, #475569);">
+              <span>🛣️ <b style="color:var(--primary-text-color, #1e293b);">${f1(plan.km)} km</b></span>
+              <span>⏱️ <b style="color:var(--primary-text-color, #1e293b);">${this.formatMins(Math.round(plan.mins))}</b></span>
+              <span>🔋 <b style="color:var(--primary-text-color, #1e293b);">${Math.round(plan.info.soc)}%</b> (~${f1(plan.info.range)} km)</span>
+              <span>📍 ${plan.originLabel || 'vị trí xe'}</span>
+          </div>
+          <div style="margin-top:6px; font-size:11px; font-weight:bold; color:${verdictColor};">
+              ${verdictText}
+          </div>
+          ${(enough || plan.covered === false) ? '' : `<div style="font-size:10px; color:var(--secondary-text-color, #64748b); margin-top:2px;">Dự kiến tới đích còn ~${Math.max(0, Math.round(socArrival))}% • Mỗi chặng dùng ~75% quãng đường dự kiến • Chặng cuối ~${f1(plan.km - plan.stops[plan.stops.length - 1].km)} km • Đã dò ${plan.stationCount} trạm quanh tuyến</div>`}
+          ${routeNote}
+          ${stopRows}
+          <div id="vf-route-next"></div>
+          <a href="${btnUrl}" target="_blank" style="display:flex; align-items:center; justify-content:center; gap:4px; margin-top:8px; background:#2563eb; color:white; padding:8px; border-radius:8px; text-decoration:none; font-weight:bold; font-size:11px;">
+              <ha-icon icon="mdi:navigation-variant" style="--mdc-icon-size:14px;"></ha-icon> ${plan.stops.length ? 'Dẫn đường kèm điểm dừng sạc' : 'Dẫn đường bằng Google Maps'}
+          </a>
+          <button id="btn-route-clear" style="margin-top:6px; width:100%; background:#f1f5f9; color:#334155; border:none; border-radius:8px; padding:6px; font-weight:bold; font-size:11px; cursor:pointer;">Xoá lộ trình</button>
+      `;
+      const btnClear = el.querySelector('#btn-route-clear');
+      if (btnClear) btnClear.onclick = () => this._clearRoutePlan(true);
+      this._lastLegKey = null;
+      this._lastLegPosKey = null;
+      this._refreshNextLeg();
+  }
+
+  _clearRoutePlan(resetInput) {
+      this._routePlan = null;
+      this._routeGeo = null;
+      this._routeDest = null;
+      this._lastLegKey = null;
+      this._lastLegPosKey = null;
+      if (this._routeLayer) this._routeLayer.clearLayers();
+      const el = this.querySelector('#vf-route-result');
+      if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+      if (resetInput) {
+          const input = this.querySelector('#vf-route-input');
+          if (input) input.value = '';
+      }
+      if (this._setRouteStatus) this._setRouteStatus(null);
+      this._setPickMode(false);
+  }
+  // Kết thúc khối.
 
   getCardSize() { return 8; }
 }
