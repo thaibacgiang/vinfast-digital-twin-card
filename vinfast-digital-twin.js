@@ -1139,6 +1139,14 @@ class VinFastDigitalTwin extends HTMLElement {
                   <div class="stat-info"><div class="stat-label">THỐNG KÊ LÁI XE</div><div class="stat-val" id="vf-stat-total-dist">--</div></div>
                 </div>
               </div>
+
+              <div class="stat-box clickable" id="box-health">
+                <div class="box-main">
+                  <ha-icon icon="mdi:shield-check" style="color: #10b981;"></ha-icon>
+                  <div class="stat-info"><div class="stat-label">TÌNH TRẠNG &amp; BẢO DƯỠNG</div><div class="stat-val" id="vf-stat-health">--</div></div>
+                </div>
+              </div>
+              
               
               <div class="stat-detail-container" id="detail-container-4">
                   <div class="stat-detail-content" id="detail-daily">
@@ -1160,6 +1168,13 @@ class VinFastDigitalTwin extends HTMLElement {
                       <div id="stats-chart-container" style="height:140px; display:flex; align-items:flex-end; gap:6px; padding-top:15px; padding-bottom: 25px; border-bottom:1px solid var(--divider-color, #e2e8f0); overflow-x: auto; overflow-y: hidden; scroll-behavior: smooth;">
                           <div style="text-align:center; width:100%; color:#94a3b8; font-size:11px;">Đang tải biểu đồ...</div>
                       </div>
+                  </div>
+              </div>
+
+              <div class="stat-detail-container" id="detail-container-5">
+                  <div class="stat-detail-content" id="detail-health">
+                      <div id="vf-health-body" style="padding:4px 0;">Đang tải dữ liệu...</div>
+                      <button id="vf-health-refresh" style="margin-top:12px; width:100%; padding:9px; border-radius:8px; border:1px solid var(--divider-color, #e2e8f0); background:var(--primary-background-color, #fff); color:var(--primary-text-color, #1e293b); font-weight:bold; font-size:12px; cursor:pointer;">Làm mới dữ liệu mở rộng</button>
                   </div>
               </div>
             </div> 
@@ -1334,6 +1349,8 @@ class VinFastDigitalTwin extends HTMLElement {
         
         .vf-stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 20px; }
         .stat-box { display: flex; align-items: center; gap: 8px; background: var(--secondary-background-color, rgba(243, 244, 246, 0.6)); padding: 10px; border-radius: 12px; border: 1px solid var(--divider-color, rgba(229, 231, 235, 0.8)); transition: all 0.2s; cursor: pointer; height: 60px; box-sizing: border-box; }
+        /* Thẻ "Tình trạng & bảo dưỡng" là ô lẻ cuối hàng: kéo rộng gấp 2 cho vừa lưới */
+        #box-health { grid-column: 1 / -1; }
         .stat-box:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); background: var(--card-background-color, white); }
         .stat-box.active-box { border-color: #2563eb; background: var(--card-background-color, white); box-shadow: 0 4px 12px rgba(37,99,235,0.15); transform: translateY(-2px); }
         
@@ -1446,6 +1463,9 @@ class VinFastDigitalTwin extends HTMLElement {
           if (!isExpanded) {
               box.classList.add('active-box'); container.style.display = 'block'; detail.style.display = 'block';
               if (boxId === '#box-charge') this.renderChargeHistory();
+              // Mở thẻ sức khỏe: nạp lại lịch sử sạc rồi vẽ lại (API "lần sạc gần nhất" của
+              // VinFast đứng yên từ 14/09, lịch sử sạc mới hơn nên phải lấy bản tươi).
+              if (boxId === '#box-health') { this.renderHealthPanel(); this.fetchChargeHistory(vinStr).then(() => this.renderHealthPanel()); }
           }
       };
 
@@ -1484,6 +1504,236 @@ class VinFastDigitalTwin extends HTMLElement {
           listEl.innerHTML = html;
       };
 
+      // ---------------------------------------------------------------
+      // KHỐI "TÌNH TRẠNG & BẢO DƯỠNG" (dữ liệu từ extended_api.py)
+      // ---------------------------------------------------------------
+      const fmtEpoch = (v) => {
+          if (v === null || v === undefined || v === '') return null;
+          const n = Number(v);
+          // sensor device_class=timestamp trả chuỗi ISO; epoch ms cũng chấp nhận
+          const d = (!isNaN(n) && n > 0) ? new Date(n < 1e12 ? n * 1000 : n) : new Date(v);
+          if (isNaN(d.getTime())) return null;
+          try { return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+          catch (e) { return d.toISOString(); }
+      };
+      const isOn = (v) => v === true || v === 'on' || v === 'true' || v === 'True' || v === '1';
+
+      this.renderHealthPanel = () => {
+          // Hàm này chỉ được tạo 1 lần lúc init nên biến `hass` bên ngoài bị đóng băng ở
+          // lần gán đầu tiên -> luôn đọc lại từ this._hass (được làm mới mỗi lần hass đổi).
+          const hass = this._hass || {};
+          const pfx = this._entityPrefix;
+          const getValidState = (suffix) => {
+              const s = hass.states[`sensor.${pfx}_${suffix}`];
+              return (s && s.state !== 'unavailable' && s.state !== 'unknown' && s.state !== '') ? s.state : null;
+          };
+          const alerts = Number(getValidState('so_canh_bao_tren_xe') || 0);
+          const thiefAlert = isOn(getValidState('co_su_kien_bao_trom'));
+          const thiefArmed = isOn(getValidState('chuong_bao_trom_dang_bat'));
+          const fwOn = isOn(getValidState('co_ban_cap_nhat_firmware'));
+          const score = getValidState('diem_lai_xe_an_toan');
+
+          // Nguồn "lần sạc gần nhất": API vf-safety-driving của VinFast đứng ở 14/09/2026 (đã đối
+          // chiếu 20/09 vẫn trả 14/09) trong khi lịch sử sạc (ccarcharging) đã có phiên 19/09 20:47.
+          // Vì vậy lấy phiên mới nhất trong lịch sử sạc khi nó mới hơn API.
+          // ponytail: chỉ so 1 mốc thời gian; nâng cấp khi VinFast sửa lại endpoint last-charge.
+          const histList = Array.isArray(this._chargeHistoryData) ? this._chargeHistoryData : [];
+          const newest = histList.reduce((a, b) =>
+              (Number(b && b.session_time || 0) > Number(a && a.session_time || 0) ? b : a), null);
+          const apiChargeMs = Date.parse(getValidState('thoi_diem_sac_gan_nhat') || '');
+          const histChargeMs = newest ? Number(newest.session_time || 0) * 1000 : NaN;
+          const useHist = !!(newest && isFinite(histChargeMs) && (!isFinite(apiChargeMs) || histChargeMs > apiChargeMs));
+
+          const summaryEl = this.querySelector('#vf-stat-health');
+          if (summaryEl) {
+              if (thiefAlert) { summaryEl.innerText = 'CÓ CẢNH BÁO TRỘM'; summaryEl.style.color = '#dc2626'; }
+              else if (alerts > 0) { summaryEl.innerText = `${alerts} cảnh báo`; summaryEl.style.color = '#f59e0b'; }
+              else if (fwOn) { summaryEl.innerText = 'Có bản cập nhật'; summaryEl.style.color = '#2563eb'; }
+              else if (score) { summaryEl.innerText = `${score} điểm`; summaryEl.style.color = '#10b981'; }
+              else { summaryEl.innerText = 'Bình thường'; summaryEl.style.color = '#10b981'; }
+          }
+
+          const host = this.querySelector('#vf-health-body');
+          const box = this.querySelector('#box-health');
+          if (!host || !box || !box.classList.contains('active-box')) return;
+
+          // ---- Định dạng giá trị: số kiểu Việt Nam, bỏ ".0" thừa, ẩn giá trị rỗng ----
+          const num = (v, unit, dec) => {
+              if (v === null || v === undefined || v === '') return null;
+              const n = Number(v);
+              if (!isFinite(n)) return null;
+              const opts = (dec === undefined)
+                  ? { maximumFractionDigits: 1 }
+                  : { minimumFractionDigits: dec, maximumFractionDigits: dec };
+              let s;
+              try { s = n.toLocaleString('vi-VN', opts); } catch (e) { s = String(n); }
+              return unit ? `${s}\u00a0${unit}` : s;
+          };
+          const money = (v) => { const s = num(v); return s === null ? null : `${s}\u00a0đ`; };
+          const fmtMinutes = (v) => {
+              if (v === null || v === undefined || v === '') return null;
+              const n = Number(v);
+              if (!isFinite(n) || n <= 0) return null;
+              if (n < 60) return num(n, 'phút');
+              const h = Math.floor(n / 60), m = Math.round(n % 60);
+              return m ? `${h} giờ ${m} phút` : `${h} giờ`;
+          };
+          const phone = (v) => {
+              if (v === null || v === undefined || v === '') return null;
+              const s = String(v).trim();
+              const m = s.match(/^(?:\+?84|0)(\d{9})$/);
+              return m ? `+84 ${m[1].slice(0, 3)} ${m[1].slice(3, 6)} ${m[1].slice(6)}` : s;
+          };
+          // ISO "YYYY-MM-DD" -> "DD/MM/YYYY" (bảo hành, kỳ tính điểm)
+          const fmtDay = (v) => {
+              if (v === null || v === undefined || v === '') return null;
+              const s = String(v).trim();
+              const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+              return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+          };
+          const fmtDayRange = (v) => {
+              if (v === null || v === undefined || v === '') return null;
+              const parts = String(v).trim().split(':');
+              if (parts.length === 2) {
+                  const a = fmtDay(parts[0]), b = fmtDay(parts[1]);
+                  if (a && b) return `${a} – ${b}`;
+              }
+              return fmtDay(v);
+          };
+          const ENUM_VI = {
+              BALANCE: 'Cân bằng tốt', BALANCED: 'Cân bằng tốt', IMBALANCE: 'Lệch cell', UNBALANCED: 'Lệch cell',
+              NORMAL: 'Bình thường', GOOD: 'Tốt', WARNING: 'Cảnh báo', LOW: 'Yếu', BAD: 'Kém',
+              SUCCESS: 'Thành công', SUCCEEDED: 'Thành công', FAILED: 'Thất bại', FAIL: 'Thất bại',
+              DC: 'DC (sạc nhanh)', AC: 'AC (sạc thường)',
+          };
+          // Chuỗi trạng thái -> tiếng Việt; coi unknown/none/null là "không có dữ liệu"
+          const tr = (v) => {
+              if (v === null || v === undefined || v === '') return null;
+              const s = String(v).trim();
+              const low = s.toLowerCase();
+              if (!s || low === 'unknown' || low === 'none' || low === 'null' || low === 'nan') return null;
+              return ENUM_VI[s.toUpperCase()] || s;
+          };
+          const onOff = (v) => (v === null || v === undefined || v === '') ? null : (isOn(v) ? 'Đang bật' : 'Đang tắt');
+          const yesNo = (v) => (v === null || v === undefined || v === '') ? null : (isOn(v) ? 'Có' : 'Không');
+
+          const BORDER = 'border-bottom:1px dashed var(--divider-color, #e2e8f0);';
+          // Hàng nhãn trái – giá trị phải (giá trị ngắn)
+          const row = (label, value, color) => {
+              if (value === null || value === undefined || value === '') return '';
+              return `<div style="${BORDER} display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:6px 0;">
+                  <span style="color:var(--secondary-text-color, #64748b); font-size:11px; white-space:nowrap;">${label}</span>
+                  <b style="color:${color || 'var(--primary-text-color, #1e293b)'}; text-align:right; font-size:12px;">${value}</b></div>`;
+          };
+          // Hàng nhãn trên – giá trị xuống dòng (văn bản dài: thói quen, nội dung cảnh báo)
+          const block = (label, value, color) => {
+              if (value === null || value === undefined || value === '') return '';
+              return `<div style="${BORDER} padding:6px 0;">
+                  <div style="color:var(--secondary-text-color, #64748b); font-size:11px;">${label}</div>
+                  <div style="color:${color || 'var(--primary-text-color, #1e293b)'}; font-weight:600; font-size:12px; line-height:1.45; margin-top:2px;">${value}</div></div>`;
+          };
+          const group = (title, icon, rows, color) => {
+              const body = rows.filter(Boolean).join('');
+              if (!body) return '';
+              return `<div style="margin-top:12px; border-left:3px solid ${color}; padding-left:9px;">
+                  <div style="display:flex; align-items:center; gap:5px; font-size:10px; font-weight:900; letter-spacing:.5px; color:${color}; text-transform:uppercase;">
+                      <ha-icon icon="${icon}" style="--mdc-icon-size:14px;"></ha-icon>${title}</div>
+                  ${body}</div>`;
+          };
+
+          // ---- Dữ liệu đã chuẩn hoá ----
+          const armedState = getValidState('chuong_bao_trom_dang_bat');
+          const alertState = getValidState('co_su_kien_bao_trom');
+          const alertCountState = getValidState('so_canh_bao_tren_xe');
+          const fwState = getValidState('co_ban_cap_nhat_firmware');
+          const peakTempRaw = getValidState('nhiet_do_pin_cao_nhat');
+          const thrTempRaw = getValidState('nguong_nhiet_do_pin');
+          const peakTempHot = (peakTempRaw !== null && thrTempRaw !== null
+              && Number(peakTempRaw) >= Number(thrTempRaw) - 5);
+
+          const html = [
+              group('An ninh', 'mdi:shield-lock-outline', [
+                  row('Chuông báo trộm', onOff(armedState), isOn(armedState) ? '#10b981' : '#64748b'),
+                  row('Sự kiện trộm', alertState === null ? null : (isOn(alertState) ? 'CÓ SỰ KIỆN' : 'Không có'), isOn(alertState) ? '#dc2626' : '#10b981'),
+                  block('Nội dung', getValidState('noi_dung_canh_bao_trom'), '#dc2626'),
+                  row('Thời điểm', fmtEpoch(getValidState('thoi_diem_canh_bao_trom'))),
+                  row('Thông báo chưa đọc', yesNo(getValidState('co_thong_bao_chua_doc')), '#2563eb'),
+              ], '#ef4444'),
+              group('Cảnh báo trên xe', 'mdi:alert-outline', [
+                  row('Số cảnh báo', alertCountState === null ? null : (alerts > 0 ? num(alerts) : '0'), alerts > 0 ? '#f59e0b' : '#10b981'),
+                  block('Nội dung', getValidState('noi_dung_canh_bao'), '#f59e0b'),
+              ], '#f59e0b'),
+              group('Sức khỏe pin', 'mdi:battery-heart-variant', [
+                  row('Hãng pin', getValidState('hang_pin')),
+                  row('Cân bằng cell', tr(getValidState('can_bang_cell_pin'))),
+                  row('Ắc quy 12V', tr(getValidState('ac_quy_12v'))),
+                  row('Nhiệt độ pin cao nhất', num(peakTempRaw, '°C'), peakTempHot ? '#dc2626' : '#10b981'),
+                  row('Ngưỡng cảnh báo', num(thrTempRaw, '°C')),
+                  block('Thói quen sạc', tr(getValidState('thoi_quen_sac_pin'))),
+                  block('Thói quen lái', tr(getValidState('thoi_quen_lai_xe'))),
+                  block('Thói quen đỗ xe', tr(getValidState('thoi_quen_do_xe'))),
+              ], '#10b981'),
+              group('Lần sạc gần nhất', 'mdi:ev-station', useHist ? [
+                  row('Thời điểm', newest.date, '#0ea5e9'),
+                  block('Trạm', newest.address),
+                  row('Sạc vào', num(newest.kwh, 'kWh')),
+                  row('Thời lượng', fmtMinutes(newest.duration)),
+                  block('Nguồn', 'Lịch sử sạc VinFast (API "lần sạc gần nhất" đứng từ 14/09)'),
+              ] : [
+                  row('Thời điểm', fmtEpoch(getValidState('thoi_diem_sac_gan_nhat'))),
+                  row('Kiểu sạc', tr(getValidState('kieu_sac_gan_nhat'))),
+                  row('Kết quả', tr(getValidState('ket_qua_lan_sac_gan_nhat'))),
+                  row('Thời lượng', fmtMinutes(getValidState('thoi_luong_sac_gan_nhat'))),
+                  row('Công suất cao nhất', num(getValidState('cong_suat_sac_cao_nhat'), 'kW')),
+              ], '#0ea5e9'),
+              // Chỉ hiện khối lái xe an toàn khi API thực sự có điểm (API trả -1 khi chưa đủ dữ liệu)
+              (score === null || score === undefined || Number(score) < 0) ? '' : group('Lái xe an toàn', 'mdi:steering', [
+                  row('Điểm', num(score, 'điểm'), '#8b5cf6'),
+                  row('Xếp hạng', tr(getValidState('xep_hang_lai_xe'))),
+                  row('Kỳ tính', fmtDayRange(getValidState('ky_tinh_diem_lai_xe'))),
+              ], '#8b5cf6'),
+              group('Bảo hành & tài khoản', 'mdi:card-account-details-outline', [
+                  row('Chủ xe', getValidState('chu_xe')),
+                  row('SĐT', phone(getValidState('sdt_chu_xe'))),
+                  row('Bảo hành từ', fmtDay(getValidState('bao_hanh_tu'))),
+                  row('Bảo hành đến', fmtDay(getValidState('bao_hanh_den')), '#2563eb'),
+                  row('Số năm', num(getValidState('so_nam_bao_hanh'), 'năm')),
+                  row('Giới hạn km', num(getValidState('gioi_han_km_bao_hanh'), 'km')),
+                  row('Số người lái', num(getValidState('so_nguoi_lai_duoc_cap_quyen'))),
+              ], '#64748b'),
+              group('Phần mềm & thuê pin', 'mdi:cellphone-cog', [
+                  row('Bản T-Box', getValidState('phien_ban_t_box_sota')),
+                  block('Gói phần mềm', getValidState('goi_phan_mem_hien_tai')),
+                  row('Có bản cập nhật', fwState === null ? null : (fwOn ? 'Có' : 'Không'), fwOn ? '#2563eb' : '#10b981'),
+                  row('Đang cập nhật', getValidState('firmware_dang_cap_nhat'), '#2563eb'),
+                  row('Phí thuê pin', money(getValidState('phi_thue_pin_thang_nay'))),
+                  row('Km trong kỳ', num(getValidState('km_di_trong_ky_thue_pin'), 'km')),
+                  row('ODO đầu kỳ', num(getValidState('odo_dau_ky_thue_pin'), 'km')),
+                  row('ODO cuối kỳ', num(getValidState('odo_cuoi_ky_thue_pin'), 'km')),
+                  row('Kỳ thuê pin', getValidState('ky_thue_pin')),
+              ], '#0f766e'),
+          ].filter(Boolean).join('');
+
+          // Bỏ đường kẻ ở hàng cuối cùng cho gọn
+          const lastBorder = html.lastIndexOf(BORDER);
+          const htmlClean = lastBorder < 0 ? html : html.slice(0, lastBorder) + html.slice(lastBorder + BORDER.length);
+
+          host.innerHTML = htmlClean || `<div style="padding:12px; text-align:center; color:var(--secondary-text-color, #94a3b8); font-size:11px;">Chưa có dữ liệu mở rộng. Bấm "Làm mới dữ liệu mở rộng".</div>`;
+      };
+
+      const healthRefreshBtn = this.querySelector('#vf-health-refresh');
+      if (healthRefreshBtn) {
+          healthRefreshBtn.onclick = () => {
+              const entityId = `button.${p}_lam_moi_mo_rong`;
+              if (this._hass && this._hass.states[entityId]) {
+                  this._hass.callService('button', 'press', { entity_id: entityId });
+              } else {
+                  alert(`Không tìm thấy nút làm mới (${entityId}). Khởi động lại Home Assistant nếu vừa nâng cấp component.`);
+              }
+          };
+      }
+      this.renderHealthPanel();
+
       const attachClick = (boxId, detailId, containerId) => {
           const el = this.querySelector(boxId);
           if (el) el.onclick = () => this.toggleExpand(boxId, detailId, containerId);
@@ -1497,6 +1747,7 @@ class VinFastDigitalTwin extends HTMLElement {
       attachClick('#box-charge', '#detail-charge', '#detail-container-3'); 
       attachClick('#box-daily', '#detail-daily', '#detail-container-4');
       attachClick('#box-stats', '#detail-stats', '#detail-container-4');
+      attachClick('#box-health', '#detail-health', '#detail-container-5');
       
       const periodBtns = this.querySelectorAll('.stats-period-btn');
       periodBtns.forEach(btn => {
@@ -2118,6 +2369,17 @@ class VinFastDigitalTwin extends HTMLElement {
           if(liveIndicator) liveIndicator.style.display = 'none';
           if(calIcon) calIcon.style.color = '#2563eb';
       }
+    }
+
+
+    // Thẻ "Tình trạng & bảo dưỡng": dữ liệu mở rộng về muộn / đổi sau khi card đã dựng,
+    // trước đây panel chỉ vẽ 1 lần lúc init nên luôn hiển thị số liệu cũ.
+    // ponytail: chỉ theo dõi các khoá hay đổi; thêm khoá mới vào đây nếu cần vẽ lại.
+    if (this.renderHealthPanel) {
+        const healthSig = ['so_canh_bao_tren_xe', 'co_su_kien_bao_trom', 'chuong_bao_trom_dang_bat', 'co_ban_cap_nhat_firmware',
+            'diem_lai_xe_an_toan', 'thoi_diem_sac_gan_nhat', 'nhiet_do_pin_cao_nhat', 'phi_thue_pin_thang_nay',
+            'odo_cuoi_ky_thue_pin', 'km_di_trong_ky_thue_pin', 'phien_ban_t_box_sota', 'co_thong_bao_chua_doc'].map(getValidState).join('|');
+        if (healthSig !== this._healthSig) { this._healthSig = healthSig; this.renderHealthPanel(); }
     }
 
     this.updateDynamicTripStats();
