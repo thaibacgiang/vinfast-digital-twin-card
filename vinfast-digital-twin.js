@@ -2311,43 +2311,67 @@ class VinFastDigitalTwin extends HTMLElement {
     const dtChargeEndTimeEl = this.querySelector('#dt-charge-end-time-value');
 
     let lastChargeStartSOC = '--';
-    let lastChargeStartTime = '--';
+    let lastChargeStartTime = '--:--';
     let lastChargeEndSOC = '--';
-    let lastChargeEndTime = '--';
+    let lastChargeEndTime = '--:--';
 
-// Lấy dữ liệu từ lịch sử sạc nếu có
-    if (this._chargeHistoryData && this._chargeHistoryData.length > 0) {
-        const lastCharge = this._chargeHistoryData[0];
+    const pad2 = (n) => String(n).padStart(2, '0');
+    // "HH:MM" (kèm DD/MM nếu không phải hôm nay)
+    const fmtClock = (ms) => {
+        if (!isFinite(ms) || ms <= 0) return null;
+        const d = new Date(ms);
+        const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+        return d.toDateString() === new Date().toDateString()
+            ? hm : `${hm} ${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`;
+    };
+
+    // Lịch sử sạc: chỉ dùng làm dự phòng khi xe không đang sạc
+    if (Array.isArray(this._chargeHistoryData) && this._chargeHistoryData.length > 0) {
+        const lastCharge = this._chargeHistoryData.reduce((a, b) =>
+            (Number(b && b.session_time || 0) > Number(a && a.session_time || 0) ? b : a));
         if (lastCharge.start_soc) lastChargeStartSOC = lastCharge.start_soc;
-        if (lastCharge.start_time) lastChargeStartTime = lastCharge.start_time;
         if (lastCharge.end_soc) lastChargeEndSOC = lastCharge.end_soc;
-        if (lastCharge.end_time) lastChargeEndTime = lastCharge.end_time;
+        const startMs = Number(lastCharge.session_time || 0) * 1000;
+        const durMin = Number(lastCharge.duration || 0);
+        lastChargeStartTime = lastCharge.start_time || fmtClock(startMs) || '--:--';
+        lastChargeEndTime = lastCharge.end_time
+            || ((startMs > 0 && durMin > 0) ? fmtClock(startMs + durMin * 60000) : null) || '--:--';
     }
 
-// Cập nhật thông tin cắm sạc
-        if (dtChargeSocStartEl) {
-            const startSoc = getValidState('pin_luc_cam_sac_lan_cuoi') || lastChargeStartSOC;
-            dtChargeSocStartEl.innerText = `${startSoc || '--'}%`;
-        }
-
-    if (dtChargeStartTimeEl) {
-        dtChargeStartTimeEl.innerText = lastChargeStartTime !== '--' ? lastChargeStartTime : '--:--';
+    // === Sensor "Hệ thống sạc" + "Thời gian sạc ước tính" ===
+    const sysObj = hass.states[`sensor.${p}_he_thong_sac`];
+    const sysTxt = getValidState('he_thong_sac') || '';
+    const sysCharging = /đang sạc/i.test(sysTxt);              // "Đang sạc AC" / "Đang sạc DC"
+    let estEnd = getValidState('thoi_gian_sac_uoc_tinh');       // ví dụ "11h15"
+    if (estEnd && /^\d{4}-\d{2}-\d{2}T/.test(estEnd)) {         // nếu sensor trả ISO timestamp
+        estEnd = fmtClock(Date.parse(estEnd)) || estEnd;
     }
 
-// Cập nhật thông tin rút sạc
+    let startTimeText = lastChargeStartTime;
+    let endTimeText = lastChargeEndTime;
+    if (sysCharging) {
+        // Giờ cắm sạc = lúc sensor chuyển sang "Đang sạc AC/DC"
+        const t = sysObj && sysObj.last_changed ? fmtClock(Date.parse(sysObj.last_changed)) : null;
+        if (t) startTimeText = t;
+        // Giờ rút sạc = giờ ước tính xong
+        if (estEnd) endTimeText = `~${estEnd}`;
+    }
+
+    // Cập nhật thông tin cắm sạc
+    if (dtChargeSocStartEl) {
+        const startSoc = getValidState('pin_luc_cam_sac_lan_cuoi') || lastChargeStartSOC;
+        dtChargeSocStartEl.innerText = `${startSoc || '--'}%`;
+    }
+    if (dtChargeStartTimeEl) dtChargeStartTimeEl.innerText = startTimeText;
+
+    // Cập nhật thông tin rút sạc
     if (dtChargeSocEndEl) {
         let endSoc = getValidState('pin_luc_rut_sac_lan_cuoi') || lastChargeEndSOC;
         const c_status = String(getValidState('trang_thai_sac') || "0");
-    // Nếu đang sạc (status == 1), hiển thị pin hiện tại
-        if (c_status == "1") {
-            endSoc = batt;
-        }
+        if (sysCharging || c_status == "1") endSoc = batt;      // đang sạc: hiện pin hiện tại
         dtChargeSocEndEl.innerText = `${endSoc || '--'}%`;
     }
-
-    if (dtChargeEndTimeEl) {
-        dtChargeEndTimeEl.innerText = lastChargeEndTime !== '--' ? lastChargeEndTime : '--:--';
-    }
+    if (dtChargeEndTimeEl) dtChargeEndTimeEl.innerText = endTimeText;
     
     const dtRangeMaxEl = this.querySelector('#dt-range-max'); if (dtRangeMaxEl) dtRangeMaxEl.innerText = `${getValidState('quang_duong_cong_bo_max') || '--'} km`;
     const dtRangeAiEl = this.querySelector('#dt-range-ai'); if (dtRangeAiEl) dtRangeAiEl.innerText = `${getValidState('quang_duong_thuc_te_day_100_pin') || '--'} km`;
