@@ -2186,11 +2186,31 @@ class VinFastDigitalTwin extends HTMLElement {
         const chargeFinishTime = (getValidState('gio_hoan_tat_sac_tinh_toan') || '').trim();
 
         if (chargeStatusTextEl) {
-            if (chargeStatus.includes('Đang sạc') && chargeFinishTime) {
-                chargeStatusTextEl.innerText =
-                    `${chargeStatus} Đến ${chargeFinishTime}`;
+            // Ưu tiên sensor "Hệ thống sạc" (Đang sạc AC / Đang sạc DC)
+            const sysChargeTxt = (getValidState('he_thong_sac') || '').trim();
+            const useSys = /đang sạc/i.test(sysChargeTxt);
+            const titleBase = useSys ? sysChargeTxt : chargeStatus;
+
+            // Giờ xong = giờ hiện tại + số phút còn lại (định dạng 13h30)
+            const fmtHm = (d) => `${d.getHours()}h${String(d.getMinutes()).padStart(2, '0')}`;
+            let finishText = '';
+            const remainMin = parseFloat(chargeTimeRemain);
+            if (isFinite(remainMin) && remainMin > 0) {
+                finishText = fmtHm(new Date(Date.now() + remainMin * 60000));
             } else {
-                chargeStatusTextEl.innerText = chargeStatus;
+                // Dự phòng: sensor "Thời gian sạc ước tính" hoặc giờ hoàn tất tính toán
+                let est = (getValidState('thoi_gian_sac_uoc_tinh') || '').trim();
+                if (/^\d{4}-\d{2}-\d{2}T/.test(est)) {
+                    const t = Date.parse(est);
+                    est = isFinite(t) ? fmtHm(new Date(t)) : '';
+                }
+                finishText = est || chargeFinishTime;
+            }
+
+            if (titleBase.includes('Đang sạc') && finishText) {
+                chargeStatusTextEl.innerText = `${titleBase} đến ${finishText}`;
+            } else {
+                chargeStatusTextEl.innerText = titleBase;
             }
         }
         
