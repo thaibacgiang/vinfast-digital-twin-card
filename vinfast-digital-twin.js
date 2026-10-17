@@ -2030,7 +2030,7 @@ class VinFastDigitalTwin extends HTMLElement {
                         <span>${outsideTemp}°C | ${weatherCondition}</span>
                     </div>
                     <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary-text-color, #64748b);">
-                        <ha-icon icon="mdi:car-info" style="--mdc-icon-size: 14px; color: #2563eb;"></ha-icon>
+                        <ha-icon icon="mdi:steering" style="--mdc-icon-size: 14px; color: #2563eb;"></ha-icon>
                         <span>${drivingState && drivingState !== 'unknown' && drivingState !== '--' ? drivingState : '--'}</span>
                     </div>
                 </div>
@@ -2040,7 +2040,7 @@ class VinFastDigitalTwin extends HTMLElement {
                 <div style="display: flex; flex-direction: column; gap: 2px;">
                     <div style="font-size: 16px; font-weight: bold; color: var(--primary-text-color);">${name}</div>
                     <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary-text-color, #64748b);">
-                        <ha-icon icon="mdi:car-info" style="--mdc-icon-size: 14px; color: #2563eb;"></ha-icon>
+                        <ha-icon icon="mdi:steering" style="--mdc-icon-size: 14px; color: #2563eb;"></ha-icon>
                         <span>${drivingState && drivingState !== 'unknown' && drivingState !== '--' ? drivingState : '--'}</span>
                     </div>
                 </div>
