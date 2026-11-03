@@ -2167,7 +2167,14 @@ class VinFastDigitalTwin extends HTMLElement {
     }
 
     const chargingBanner = this.querySelector('#vf-charging-banner');
-    const isCharging = statusTextRaw && (statusTextRaw.toLowerCase().includes('sạc') || statusTextRaw.toLowerCase().includes('hoàn tất'));
+    // [2.9.87] Chỉ coi là ĐANG SẠC khi đúng nghĩa đang sạc. Trước đây chữ 'sạc' hoặc 'hoàn tất'
+    // trong trạng thái (vd "Đã sạc xong", "Sạc xong (Đầy)", "Not Charging") đều làm banner hiện lên.
+    const _vfNotChargingWords = ['không', 'ngắt', 'chưa', 'xong', 'đầy', 'hoàn tất', 'not', 'fully', 'complete', 'unknown', 'unavailable', 'none'];
+    const _vfHasNotWord = (t) => _vfNotChargingWords.some(w => t.includes(w));
+    const _vfChargeSensor = (getValidState('trang_thai_sac') || '').toLowerCase().trim();
+    const _vfStatusLow = (statusTextRaw || '').toLowerCase();
+    const isCharging = ['1', 'đang sạc', 'charging'].includes(_vfChargeSensor)
+        || ((_vfStatusLow.includes('đang sạc') || _vfStatusLow.includes('charging')) && !_vfHasNotWord(_vfStatusLow));
     
     if (isCharging && chargingBanner && !statusTextRaw.toLowerCase().includes('không')) {
         chargingBanner.style.display = 'flex';
@@ -2216,7 +2223,26 @@ class VinFastDigitalTwin extends HTMLElement {
         
         let pwr = getValidState('cong_suat_sac_tram') || getValidState('cong_suat_sac_tinh_toan_live') || getValidState('cong_suat_sac');
         if (powerEl) powerEl.innerText = pwr ? `${pwr} kW` : 'Đang tính...';
+        // [2.9.87] Phân loại AC / DC theo công suất sạc (xe không có cờ AC/DC trực tiếp):
+        // > 12 kW là DC (AC tối đa 11 kW). Đã nhận DC thì giữ nguyên tới hết phiên sạc,
+        // vì cuối phiên DC công suất tụt xuống thấp và sẽ bị nhầm thành AC.
+        {
+            const _vfNums = ['cong_suat_sac_tram', 'cong_suat_sac_hien_tai', 'cong_suat_sac_tinh_toan_live', 'cong_suat_sac']
+                .map(k => parseFloat(String(getValidState(k) || '').replace(',', '.')))
+                .filter(n => Number.isFinite(n) && n > 0);
+            const _vfMaxKw = _vfNums.length ? Math.max(..._vfNums) : 0;
+            const _vfNow = Date.now();
+            if (this._vfChargeKindAt && _vfNow - this._vfChargeKindAt > 300000) this._vfChargeKind = null;
+            this._vfChargeKindAt = _vfNow;
+            if (_vfMaxKw > 12) this._vfChargeKind = 'DC';
+            else if (_vfMaxKw > 0 && this._vfChargeKind !== 'DC') this._vfChargeKind = 'AC';
+            if (chargeStatusTextEl && this._vfChargeKind && /Đang sạc/.test(chargeStatusTextEl.innerText)) {
+                chargeStatusTextEl.innerText = chargeStatusTextEl.innerText.replace(
+                    'Đang sạc', this._vfChargeKind === 'DC' ? 'Đang sạc DC (sạc nhanh)' : 'Đang sạc AC (sạc thường)');
+            }
+        }
     } else if (chargingBanner) {
+        this._vfChargeKind = null; this._vfChargeKindAt = 0; // [2.9.87] hết sạc -> bỏ nhận diện AC/DC
         chargingBanner.style.display = 'none';
     }
 
@@ -2925,10 +2951,18 @@ class VinFastDigitalTwin extends HTMLElement {
   }
 
   async _geocodeText(q) {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=vi&q=${encodeURIComponent(q)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Geocode HTTP ${res.status}`);
-      const data = await res.json();
+      // [2.9.87] Ưu tiên kết quả trong Việt Nam; chỉ tìm toàn cầu khi VN không có kết quả.
+      const base = `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=vi&q=${encodeURIComponent(q)}`;
+      let data = [];
+      try {
+          const rVn = await fetch(`${base}&countrycodes=vn`);
+          if (rVn.ok) data = await rVn.json();
+      } catch (e) { data = []; }
+      if (!Array.isArray(data) || !data.length) {
+          const res = await fetch(base);
+          if (!res.ok) throw new Error(`Geocode HTTP ${res.status}`);
+          data = await res.json();
+      }
       if (!Array.isArray(data) || !data.length) throw new Error('Không tìm thấy địa điểm');
       return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), name: data[0].display_name || q };
   }
@@ -3237,18 +3271,18 @@ class VinFastDigitalTwin extends HTMLElement {
           const anchors = (got.anchors || []).map(a => Object.assign({ anchor: true }, a));
           const viaKm = via.concat(anchors).map(v => Object.assign({}, v, this._nearestRoute(v.lat, v.lng, route.coords, route.cum)));
 
-          let stations = [];
+          let stations = []; let stationErr = null; // [2.9.87]
           this._setRouteStatus('Đang dò trạm sạc trên tuyến...');
           try {
               stations = this._annotateStations(await this._fetchStationsAlong(route.coords, route.cum), route.coords, route.cum);
-          } catch (e) { stations = []; }
+          } catch (e) { stations = []; stationErr = (e && e.message) ? e.message : String(e); }
 
           const solved = this._solveChargingStops(route.km, info, stations);
           this._routePlan = {
               km: route.km, mins: route.mins, dest: parsed.dest, via: viaKm, originLabel,
               anchored: got.anchored, outside: got.outside,
               stops: solved.stops, covered: solved.covered, socArrival: solved.socArrival,
-              info, origin, stationCount: stations.length
+              info, origin, stationCount: stations.length, stationErr
           };
           this._drawRoutePlan();
           this._renderRoutePlan();
@@ -3319,7 +3353,11 @@ class VinFastDigitalTwin extends HTMLElement {
       const verdictText = enough
           ? `Đủ pin để tới nơi — dự kiến còn ~${Math.max(0, Math.round(socArrival))}% (~${f1(Math.max(0, plan.info.range - plan.km))} km)`
           : (plan.covered === false
-              ? `Không đủ pin và chưa tìm được trạm sạc phù hợp trên tuyến — cần chia chặng hoặc sạc đầy trước khi đi`
+              ? (plan.stationErr
+                  ? `Không tải được dữ liệu trạm sạc (${plan.stationErr}). Hãy cập nhật tích hợp VinFast (cần endpoint /api/vinfast/stations_along) rồi tính lại`
+                  : (plan.stationCount === 0
+                      ? `Không có trạm sạc VinFast nào được tìm thấy dọc tuyến này — cần sạc đầy trước khi đi hoặc chia chặng thủ công`
+                      : `Không đủ pin và chưa tìm được trạm sạc phù hợp trên tuyến — cần chia chặng hoặc sạc đầy trước khi đi`))
               : `Không đủ pin — chia lộ trình thành ${plan.stops.length} chặng, tới trạm dự kiến còn ~20% pin`);
 
       const stopRows = plan.stops.map((s, i) => `
