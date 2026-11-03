@@ -1671,7 +1671,7 @@ class VinFastDigitalTwin extends HTMLElement {
               BALANCE: 'Cân bằng tốt', BALANCED: 'Cân bằng tốt', IMBALANCE: 'Lệch cell', UNBALANCED: 'Lệch cell',
               NORMAL: 'Bình thường', GOOD: 'Tốt', WARNING: 'Cảnh báo', LOW: 'Yếu', BAD: 'Kém',
               SUCCESS: 'Thành công', SUCCEEDED: 'Thành công', FAILED: 'Thất bại', FAIL: 'Thất bại',
-              DC: 'DC (sạc nhanh)', AC: 'AC (sạc thường)',
+              DC: 'DC', AC: 'AC',
           };
           // Chuỗi trạng thái -> tiếng Việt; coi unknown/none/null là "không có dữ liệu"
           const tr = (v) => {
@@ -2238,7 +2238,7 @@ class VinFastDigitalTwin extends HTMLElement {
             else if (_vfMaxKw > 0 && this._vfChargeKind !== 'DC') this._vfChargeKind = 'AC';
             if (chargeStatusTextEl && this._vfChargeKind && /Đang sạc/.test(chargeStatusTextEl.innerText)) {
                 chargeStatusTextEl.innerText = chargeStatusTextEl.innerText.replace(
-                    'Đang sạc', this._vfChargeKind === 'DC' ? 'Đang sạc DC (sạc nhanh)' : 'Đang sạc AC (sạc thường)');
+                    'Đang sạc', this._vfChargeKind === 'DC' ? 'Đang sạc DC' : 'Đang sạc AC');
             }
         }
     } else if (chargingBanner) {
