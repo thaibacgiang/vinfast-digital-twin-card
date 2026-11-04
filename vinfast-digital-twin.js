@@ -2236,7 +2236,9 @@ class VinFastDigitalTwin extends HTMLElement {
             this._vfChargeKindAt = _vfNow;
             if (_vfMaxKw > 12) this._vfChargeKind = 'DC';
             else if (_vfMaxKw > 0 && this._vfChargeKind !== 'DC') this._vfChargeKind = 'AC';
-            if (chargeStatusTextEl && this._vfChargeKind && /Đang sạc/.test(chargeStatusTextEl.innerText)) {
+            // Chỉ thêm AC/DC khi tiêu đề CHƯA có (sensor "Hệ thống sạc" đã trả sẵn "Đang sạc AC/DC" -> tránh lặp "AC AC")
+            if (chargeStatusTextEl && this._vfChargeKind && /Đang sạc/.test(chargeStatusTextEl.innerText)
+                && !/\b(AC|DC)\b/.test(chargeStatusTextEl.innerText)) {
                 chargeStatusTextEl.innerText = chargeStatusTextEl.innerText.replace(
                     'Đang sạc', this._vfChargeKind === 'DC' ? 'Đang sạc DC' : 'Đang sạc AC');
             }
